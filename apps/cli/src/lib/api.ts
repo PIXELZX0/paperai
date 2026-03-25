@@ -1,7 +1,14 @@
 import type {
   Agent,
+  AgentAccessTokenCreated,
+  AgentApiKeyCreated,
+  AgentRuntimeState,
+  AgentSession,
   ApprovalRequest,
   AuthUser,
+  BoardClaimChallenge,
+  BootstrapCeoResult,
+  CliAuthChallengeStatus,
   Company,
   Issue,
   IssueComment,
@@ -56,6 +63,39 @@ export class PaperAiApiClient {
     });
   }
 
+  createBoardClaimChallenge(force = false) {
+    return this.request<BoardClaimChallenge>("/setup/board-claim", {
+      method: "POST",
+      body: JSON.stringify({ force }),
+    });
+  }
+
+  bootstrapChiefExecutiveOfficer(payload: Record<string, unknown>) {
+    return this.request<BootstrapCeoResult>("/setup/bootstrap-ceo", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  createCliAuthChallenge(name?: string) {
+    return this.request<CliAuthChallengeStatus>("/auth/cli/challenges", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  getCliAuthChallengeStatus(challengeId: string, challengeToken?: string) {
+    const query = challengeToken ? `?challengeToken=${encodeURIComponent(challengeToken)}` : "";
+    return this.request<CliAuthChallengeStatus>(`/auth/cli/challenges/${encodeURIComponent(challengeId)}${query}`);
+  }
+
+  approveCliAuthChallenge(challengeId: string, challengeToken: string) {
+    return this.request<CliAuthChallengeStatus>(`/auth/cli/challenges/${encodeURIComponent(challengeId)}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ challengeToken }),
+    });
+  }
+
   listCompanies() {
     return this.request<Company[]>("/companies");
   }
@@ -68,8 +108,28 @@ export class PaperAiApiClient {
     return this.request<Agent>(`/agents/${encodeURIComponent(agentId)}`);
   }
 
+  getAgentRuntime(agentId: string) {
+    return this.request<AgentRuntimeState>(`/agents/${encodeURIComponent(agentId)}/runtime`);
+  }
+
+  listAgentSessions(agentId: string) {
+    return this.request<AgentSession[]>(`/agents/${encodeURIComponent(agentId)}/sessions`);
+  }
+
   wakeAgent(agentId: string) {
     return this.request(`/agents/${encodeURIComponent(agentId)}/wake`, { method: "POST" });
+  }
+
+  pauseAgent(agentId: string) {
+    return this.request<Agent>(`/agents/${encodeURIComponent(agentId)}/pause`, { method: "POST" });
+  }
+
+  resumeAgent(agentId: string) {
+    return this.request<Agent>(`/agents/${encodeURIComponent(agentId)}/resume`, { method: "POST" });
+  }
+
+  terminateAgent(agentId: string) {
+    return this.request<Agent>(`/agents/${encodeURIComponent(agentId)}/terminate`, { method: "POST" });
   }
 
   testAgent(agentId: string) {
@@ -78,6 +138,22 @@ export class PaperAiApiClient {
 
   resetAgentSession(agentId: string) {
     return this.request<Agent>(`/agents/${encodeURIComponent(agentId)}/reset-session`, { method: "POST" });
+  }
+
+  createAgentApiKey(agentId: string, name: string) {
+    return this.request<AgentApiKeyCreated>(`/agents/${encodeURIComponent(agentId)}/api-keys`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  createAgentAccessToken(agentId: string, expiresInMinutes?: number) {
+    return this.request<AgentAccessTokenCreated>(`/agents/${encodeURIComponent(agentId)}/access-token`, {
+      method: "POST",
+      body: JSON.stringify(
+        expiresInMinutes ? { expiresInMinutes } : {},
+      ),
+    });
   }
 
   listTasks(companyId: string) {

@@ -27,6 +27,42 @@ export async function wakeAgentAction(
   printJson(context.runtime, await client.wakeAgent(agentId));
 }
 
+export async function pauseAgentAction(
+  context: CommandContext,
+  agentId: string,
+  options: { apiUrl?: string; token?: string },
+) {
+  const client = await context.createApiClient({
+    apiUrl: options.apiUrl,
+    token: options.token,
+  });
+  printJson(context.runtime, await client.pauseAgent(agentId));
+}
+
+export async function resumeAgentAction(
+  context: CommandContext,
+  agentId: string,
+  options: { apiUrl?: string; token?: string },
+) {
+  const client = await context.createApiClient({
+    apiUrl: options.apiUrl,
+    token: options.token,
+  });
+  printJson(context.runtime, await client.resumeAgent(agentId));
+}
+
+export async function terminateAgentAction(
+  context: CommandContext,
+  agentId: string,
+  options: { apiUrl?: string; token?: string },
+) {
+  const client = await context.createApiClient({
+    apiUrl: options.apiUrl,
+    token: options.token,
+  });
+  printJson(context.runtime, await client.terminateAgent(agentId));
+}
+
 export async function testAgentAction(
   context: CommandContext,
   agentId: string,
@@ -80,6 +116,64 @@ export function registerAgentCommands(program: Command, context: CommandContext)
 
   addApiOptions(
     agent
+      .command("pause")
+      .description("Pause an agent")
+      .argument("<agentId>", "agent id")
+      .action(async (agentId: string, options) => {
+        await pauseAgentAction(context, agentId, options);
+      }),
+  );
+
+  addApiOptions(
+    agent
+      .command("resume")
+      .description("Resume an agent and queue a wake")
+      .argument("<agentId>", "agent id")
+      .action(async (agentId: string, options) => {
+        await resumeAgentAction(context, agentId, options);
+      }),
+  );
+
+  addApiOptions(
+    agent
+      .command("terminate")
+      .description("Terminate an agent and clear its session")
+      .argument("<agentId>", "agent id")
+      .action(async (agentId: string, options) => {
+        await terminateAgentAction(context, agentId, options);
+      }),
+  );
+
+  addApiOptions(
+    agent
+      .command("runtime")
+      .description("Read the current runtime state for an agent")
+      .argument("<agentId>", "agent id")
+      .action(async (agentId: string, options) => {
+        const client = await context.createApiClient({
+          apiUrl: options.apiUrl,
+          token: options.token,
+        });
+        printJson(context.runtime, await client.getAgentRuntime(agentId));
+      }),
+  );
+
+  addApiOptions(
+    agent
+      .command("sessions")
+      .description("List recorded agent sessions")
+      .argument("<agentId>", "agent id")
+      .action(async (agentId: string, options) => {
+        const client = await context.createApiClient({
+          apiUrl: options.apiUrl,
+          token: options.token,
+        });
+        printJson(context.runtime, await client.listAgentSessions(agentId));
+      }),
+  );
+
+  addApiOptions(
+    agent
       .command("test")
       .description("Validate an agent adapter configuration")
       .argument("<agentId>", "agent id")
@@ -99,6 +193,37 @@ export function registerAgentCommands(program: Command, context: CommandContext)
           token: options.token,
         });
         printJson(context.runtime, await client.resetAgentSession(agentId));
+      }),
+  );
+
+  addApiOptions(
+    agent
+      .command("create-key")
+      .description("Create an API key for an agent runtime")
+      .argument("<agentId>", "agent id")
+      .requiredOption("--name <name>", "key name")
+      .action(async (agentId: string, options) => {
+        const client = await context.createApiClient({
+          apiUrl: options.apiUrl,
+          token: options.token,
+        });
+        printJson(context.runtime, await client.createAgentApiKey(agentId, options.name));
+      }),
+  );
+
+  addApiOptions(
+    agent
+      .command("create-token")
+      .description("Create a signed access token for an agent runtime")
+      .argument("<agentId>", "agent id")
+      .option("--expires-in-minutes <minutes>", "token lifetime in minutes")
+      .action(async (agentId: string, options) => {
+        const client = await context.createApiClient({
+          apiUrl: options.apiUrl,
+          token: options.token,
+        });
+        const expiresInMinutes = options.expiresInMinutes ? Number(options.expiresInMinutes) : undefined;
+        printJson(context.runtime, await client.createAgentAccessToken(agentId, expiresInMinutes));
       }),
   );
 }

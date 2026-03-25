@@ -184,3 +184,84 @@ export const createPluginSchema = z.object({
 export const importCompanyPackageSchema = z.object({
   root: z.string().min(1),
 });
+
+export const paperAiDatabaseBackupConfigSchema = z.object({
+  dir: z.string().min(1),
+});
+
+export const paperAiDatabaseConfigSchema = z
+  .object({
+    mode: z.enum(["embedded-postgres", "postgres"]).default("embedded-postgres"),
+    connectionString: z.string().min(1).optional(),
+    embeddedDataDir: z.string().min(1),
+    embeddedPort: z.number().int().positive().default(54329),
+    backup: paperAiDatabaseBackupConfigSchema,
+  })
+  .superRefine((value, ctx) => {
+    if (value.mode === "postgres" && !value.connectionString) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "connectionString is required when database.mode=postgres",
+        path: ["connectionString"],
+      });
+    }
+  });
+
+export const paperAiServerConfigSchema = z.object({
+  host: z.string().min(1).default("127.0.0.1"),
+  port: z.number().int().positive().default(3001),
+  webOrigin: z.string().url().default("http://localhost:5173"),
+  jwtSecret: z.string().min(8).default("change-me-paperai"),
+});
+
+export const paperAiAuthConfigSchema = z.object({
+  boardClaimTtlMinutes: z.number().int().positive().default(30),
+  cliChallengeTtlMinutes: z.number().int().positive().default(10),
+  agentTokenTtlMinutes: z.number().int().positive().default(60),
+});
+
+export const paperAiConfigSchema = z.object({
+  version: z.literal(1).default(1),
+  database: paperAiDatabaseConfigSchema,
+  server: paperAiServerConfigSchema,
+  auth: paperAiAuthConfigSchema,
+});
+
+export const createBoardClaimChallengeSchema = z.object({
+  force: z.boolean().optional().default(false),
+});
+
+export const claimBoardChallengeSchema = z.object({
+  code: z.string().min(4),
+});
+
+export const createCliAuthChallengeSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+});
+
+export const approveCliAuthChallengeSchema = z.object({
+  challengeToken: z.string().min(16),
+});
+
+export const createAgentApiKeySchema = z.object({
+  name: z.string().min(1).max(120),
+});
+
+export const bootstrapCeoSchema = z.object({
+  token: z.string().min(16),
+  code: z.string().min(4),
+  email: z.string().email(),
+  name: z.string().min(1),
+  password: z.string().min(8),
+  company: z.object({
+    slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
+    name: z.string().min(2),
+    description: z.string().optional(),
+    brandColor: z.string().optional(),
+    monthlyBudgetCents: z.number().int().nonnegative().default(0),
+  }),
+});
+
+export const createAgentAccessTokenSchema = z.object({
+  expiresInMinutes: z.number().int().positive().max(60 * 24 * 30).optional(),
+});

@@ -1,5 +1,11 @@
 import { CliError } from "./errors.js";
-import { DEFAULT_API_URL, type ProfileConfig, readProfileConfig, writeProfileConfig } from "./config.js";
+import {
+  DEFAULT_API_URL,
+  type ProfileConfig,
+  readInstanceConfig,
+  readProfileConfig,
+  writeProfileConfig,
+} from "./config.js";
 import { PaperAiApiClient } from "./api.js";
 import type { CliRuntime } from "./runtime.js";
 
@@ -40,7 +46,26 @@ export function createCommandContext(runtime: CliRuntime): CommandContext {
       return await writeProfileConfig(runtime.env, profile);
     },
     async resolveApiUrl(option) {
-      return option ?? runtime.env.PAPERAI_API_URL ?? (await loadProfile()).apiUrl ?? DEFAULT_API_URL;
+      if (option) {
+        return option;
+      }
+
+      if (runtime.env.PAPERAI_API_URL) {
+        return runtime.env.PAPERAI_API_URL;
+      }
+
+      const profile = await loadProfile();
+      if (profile.apiUrl) {
+        return profile.apiUrl;
+      }
+
+      const config = await readInstanceConfig(runtime.env);
+      if (config) {
+        const host = config.server.host === "0.0.0.0" ? "127.0.0.1" : config.server.host;
+        return `http://${host}:${config.server.port}/api/v1`;
+      }
+
+      return DEFAULT_API_URL;
     },
     async resolveToken(option, required = true) {
       const token = option ?? runtime.env.PAPERAI_TOKEN ?? (await loadProfile()).token ?? null;

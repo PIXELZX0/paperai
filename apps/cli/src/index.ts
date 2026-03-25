@@ -8,10 +8,15 @@ import { registerAgentCommands } from "./commands/agent.js";
 import { registerApprovalCommands } from "./commands/approval.js";
 import { registerAuthCommands } from "./commands/auth.js";
 import { registerCompanyCommands } from "./commands/company.js";
+import { registerConfigureCommands } from "./commands/configure.js";
+import { registerDbBackupCommands } from "./commands/db-backup.js";
+import { registerDoctorCommands } from "./commands/doctor.js";
 import { registerIssueCommands } from "./commands/issue.js";
 import { registerLegacyCommands } from "./commands/legacy.js";
+import { registerOnboardCommands } from "./commands/onboard.js";
 import { registerPackageCommands } from "./commands/package.js";
 import { registerPluginCommands } from "./commands/plugin.js";
+import { registerRunCommands } from "./commands/run.js";
 import { registerTaskCommands } from "./commands/task.js";
 
 function resolveInvocationName(explicitName?: string) {
@@ -47,6 +52,11 @@ export function buildProgram(input: CliRuntimeInput = {}) {
     .exitOverride();
 
   registerAuthCommands(program, context);
+  registerOnboardCommands(program, context);
+  registerConfigureCommands(program, context);
+  registerDoctorCommands(program, context);
+  registerRunCommands(program, context);
+  registerDbBackupCommands(program, context);
   registerCompanyCommands(program, context);
   registerAgentCommands(program, context);
   registerTaskCommands(program, context);

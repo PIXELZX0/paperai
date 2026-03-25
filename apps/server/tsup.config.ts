@@ -5,6 +5,7 @@ export default defineConfig({
   format: ["cjs"],
   target: "es2022",
   noExternal: [/@paperai\//],
+  external: ["embedded-postgres", /^@embedded-postgres\//],
   splitting: false,
   clean: true,
   outExtension() {

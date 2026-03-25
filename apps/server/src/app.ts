@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import Fastify from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
 import fastifyStatic from "@fastify/static";
@@ -14,6 +14,21 @@ import { RuntimeOrchestrator } from "./services/runtime.js";
 function findWebDistDir() {
   const candidates = [resolve(process.cwd(), "apps/web/dist"), resolve(process.cwd(), "../web/dist")];
   return candidates.find((candidate) => existsSync(candidate));
+}
+
+function parseBearerToken(header: string | undefined): string | null {
+  if (!header) {
+    return null;
+  }
+  const [scheme, value] = header.split(" ", 2);
+  if (scheme?.toLowerCase() !== "bearer" || !value) {
+    return null;
+  }
+  return value.trim() || null;
+}
+
+function looksLikeJwt(token: string): boolean {
+  return token.split(".").length === 3;
 }
 
 export interface CreateAppOptions {
@@ -41,14 +56,68 @@ export async function createApp(options: CreateAppOptions = {}) {
   app.decorate("platformService", platformService);
   app.decorate("eventBus", eventBus);
   app.decorate("runtime", runtime);
-  app.decorate("authenticate", async function authenticate(request, reply) {
+  app.decorate("paperaiConfig", config);
+  app.decorate("authenticate", async function authenticate(request: FastifyRequest, reply: FastifyReply) {
+    const headerToken = parseBearerToken(request.headers.authorization);
+    const boardApiKey = request.headers["x-paperai-api-key"];
+
     try {
       const queryToken = (request.query as { token?: string } | undefined)?.token;
-      if (queryToken && !request.headers.authorization) {
+      const rawBoardApiKey = typeof boardApiKey === "string" ? boardApiKey : headerToken && !looksLikeJwt(headerToken) ? headerToken : null;
+
+      if (rawBoardApiKey) {
+        const user = await app.platformService.authenticateBoardApiKey(rawBoardApiKey);
+        if (!user) {
+          throw new Error("unauthorized");
+        }
+        request.user = {
+          sub: user.id,
+          email: user.email,
+          type: "user",
+        };
+      } else if (queryToken && !request.headers.authorization) {
         request.user = app.jwt.verify(queryToken);
       } else {
         await request.jwtVerify();
       }
+    } catch {
+      reply.code(401).send({ error: "unauthorized" });
+    }
+  });
+  app.decorate("authenticateAgent", async function authenticateAgent(request: FastifyRequest, reply: FastifyReply) {
+    const headerToken = parseBearerToken(request.headers.authorization);
+    const rawAgentKey =
+      typeof request.headers["x-paperai-agent-key"] === "string"
+        ? request.headers["x-paperai-agent-key"]
+        : headerToken && !looksLikeJwt(headerToken)
+          ? headerToken
+          : null;
+
+    try {
+      if (rawAgentKey) {
+        const agent = await app.platformService.authenticateAgentApiKey(rawAgentKey);
+        if (!agent) {
+          throw new Error("unauthorized");
+        }
+        request.agent = agent;
+        request.user = {
+          sub: agent.id,
+          type: "agent",
+          agentId: agent.id,
+        };
+        return;
+      }
+
+      await request.jwtVerify();
+      if (request.user.type !== "agent" || !request.user.agentId) {
+        throw new Error("unauthorized");
+      }
+
+      const agent = await app.platformService.getAgent(request.user.agentId);
+      if (!agent) {
+        throw new Error("unauthorized");
+      }
+      request.agent = agent;
     } catch {
       reply.code(401).send({ error: "unauthorized" });
     }

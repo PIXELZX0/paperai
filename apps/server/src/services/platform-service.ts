@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { DomainEventBus } from "@paperai/core";
 import { hasBoardPermission } from "@paperai/core";
@@ -8,9 +8,17 @@ import { validatePluginManifest } from "@paperai/plugin-sdk";
 import type {
   ActivityEvent,
   Agent,
+  AgentAccessTokenCreated,
+  AgentApiKeyCreated,
+  AgentRuntimeState,
+  AgentSession,
   ApprovalRequest,
   AuthUser,
   BoardPermission,
+  BoardApiKeyCreated,
+  BoardClaimChallenge,
+  BootstrapCeoResult,
+  CliAuthChallengeStatus,
   BudgetPolicy,
   Company,
   CompanyMember,
@@ -33,6 +41,18 @@ import { hashPassword, verifyPassword } from "../lib/passwords.js";
 
 function toIso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
+}
+
+function hashOpaqueToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function createOpaqueToken(prefix: string): string {
+  return `paperai_${prefix}_${randomUUID().replaceAll("-", "")}${randomUUID().replaceAll("-", "")}`;
+}
+
+function createChallengeCode(): string {
+  return String(Math.floor(100000 + Math.random() * 900000));
 }
 
 function mapUser(row: typeof schema.users.$inferSelect): AuthUser {
@@ -95,6 +115,35 @@ function mapInvite(row: typeof schema.invites.$inferSelect): Invite {
     acceptedAt: toIso(row.acceptedAt),
     expiresAt: row.expiresAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapBoardClaimChallenge(row: typeof schema.boardClaimChallenges.$inferSelect): BoardClaimChallenge {
+  return {
+    id: row.id,
+    token: row.token,
+    code: row.code,
+    claimedByUserId: row.claimedByUserId,
+    expiresAt: row.expiresAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    claimedAt: toIso(row.claimedAt),
+  };
+}
+
+function mapCliAuthChallenge(row: typeof schema.cliAuthChallenges.$inferSelect): CliAuthChallengeStatus {
+  return {
+    id: row.id,
+    challengeToken: row.challengeToken,
+    requestedByUserId: row.requestedByUserId,
+    approvedByUserId: row.approvedByUserId,
+    boardApiKeyId: row.boardApiKeyId,
+    approved: Boolean(row.approvedAt),
+    expiresAt: row.expiresAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    approvedAt: toIso(row.approvedAt),
+    consumedAt: toIso(row.consumedAt),
+    boardToken: row.approvedToken,
+    name: row.name,
   };
 }
 
@@ -222,6 +271,40 @@ function mapIssueComment(row: typeof schema.taskComments.$inferSelect): IssueCom
   };
 }
 
+function taskFromIssue(issue: Issue): Task {
+  return {
+    id: issue.id,
+    companyId: issue.companyId,
+    projectId: issue.projectId,
+    goalId: issue.goalId,
+    parentTaskId: issue.parentId,
+    assigneeAgentId: issue.assigneeAgentId,
+    createdByUserId: issue.createdByUserId,
+    title: issue.title,
+    description: issue.description,
+    status: issue.status,
+    priority: issue.priority,
+    checkoutHeartbeatRunId: issue.checkoutHeartbeatRunId,
+    originKind: issue.originKind,
+    originRef: issue.originRef,
+    metadata: issue.metadata,
+    createdAt: issue.createdAt,
+    updatedAt: issue.updatedAt,
+  };
+}
+
+function taskCommentFromIssueComment(comment: IssueComment): TaskComment {
+  return {
+    id: comment.id,
+    taskId: comment.issueId,
+    companyId: comment.companyId,
+    authorUserId: comment.authorUserId,
+    authorAgentId: comment.authorAgentId,
+    body: comment.body,
+    createdAt: comment.createdAt,
+  };
+}
+
 function mapHeartbeat(row: typeof schema.heartbeatRuns.$inferSelect): HeartbeatRun {
   return {
     id: row.id,
@@ -240,6 +323,18 @@ function mapHeartbeat(row: typeof schema.heartbeatRuns.$inferSelect): HeartbeatR
     sessionAfter: row.sessionAfter,
     startedAt: toIso(row.startedAt),
     finishedAt: toIso(row.finishedAt),
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapAgentSession(row: typeof schema.agentSessions.$inferSelect): AgentSession {
+  return {
+    id: row.id,
+    agentId: row.agentId,
+    heartbeatRunId: row.heartbeatRunId,
+    summary: row.summary,
+    sessionState: row.sessionState,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -346,6 +441,51 @@ export class PlatformService {
     return new PlatformService(createDatabase(connectionString), eventBus);
   }
 
+  private async isBoardAlreadyClaimed(): Promise<boolean> {
+    const [user] = await this.db.select({ id: schema.users.id }).from(schema.users).limit(1);
+    return Boolean(user);
+  }
+
+  private async createBoardApiKeyRecord(userId: string, name: string): Promise<BoardApiKeyCreated> {
+    const token = createOpaqueToken("board");
+    const [row] = await this.db
+      .insert(schema.boardApiKeys)
+      .values({
+        userId,
+        name,
+        keyHash: hashOpaqueToken(token),
+      })
+      .returning();
+
+    return {
+      id: row.id,
+      userId: row.userId,
+      name: row.name,
+      token,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  private async createAgentApiKeyRecord(agentId: string, name: string): Promise<AgentApiKeyCreated> {
+    const token = createOpaqueToken("agent");
+    const [row] = await this.db
+      .insert(schema.agentApiKeys)
+      .values({
+        agentId,
+        name,
+        keyHash: hashOpaqueToken(token),
+      })
+      .returning();
+
+    return {
+      id: row.id,
+      agentId: row.agentId,
+      name: row.name,
+      token,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
   private async recordActivity(seed: {
     companyId: string;
     actorUserId?: string | null;
@@ -372,6 +512,231 @@ export class PlatformService {
     const activity = mapActivity(row);
     this.eventBus.publish("activity", activity);
     return activity;
+  }
+
+  async authenticateBoardApiKey(token: string): Promise<AuthUser | null> {
+    const keyHash = hashOpaqueToken(token);
+    const [row] = await this.db
+      .select({
+        keyId: schema.boardApiKeys.id,
+        user: schema.users,
+      })
+      .from(schema.boardApiKeys)
+      .innerJoin(schema.users, eq(schema.users.id, schema.boardApiKeys.userId))
+      .where(and(eq(schema.boardApiKeys.keyHash, keyHash), isNull(schema.boardApiKeys.revokedAt)));
+
+    if (!row) {
+      return null;
+    }
+
+    await this.db
+      .update(schema.boardApiKeys)
+      .set({ lastUsedAt: new Date() })
+      .where(eq(schema.boardApiKeys.id, row.keyId));
+
+    return mapUser(row.user);
+  }
+
+  async authenticateAgentApiKey(token: string): Promise<Agent | null> {
+    const keyHash = hashOpaqueToken(token);
+    const [row] = await this.db
+      .select({
+        keyId: schema.agentApiKeys.id,
+        agent: schema.agents,
+      })
+      .from(schema.agentApiKeys)
+      .innerJoin(schema.agents, eq(schema.agents.id, schema.agentApiKeys.agentId))
+      .where(and(eq(schema.agentApiKeys.keyHash, keyHash), isNull(schema.agentApiKeys.revokedAt)));
+
+    if (!row) {
+      return null;
+    }
+
+    await this.db
+      .update(schema.agentApiKeys)
+      .set({ lastUsedAt: new Date() })
+      .where(eq(schema.agentApiKeys.id, row.keyId));
+
+    return mapAgent(row.agent);
+  }
+
+  async createBoardClaimChallenge(ttlMinutes: number, force = false): Promise<BoardClaimChallenge> {
+    if (!force && (await this.isBoardAlreadyClaimed())) {
+      throw new Error("board_already_claimed");
+    }
+
+    const [row] = await this.db
+      .insert(schema.boardClaimChallenges)
+      .values({
+        token: createOpaqueToken("claim"),
+        code: createChallengeCode(),
+        expiresAt: new Date(Date.now() + ttlMinutes * 60_000),
+      })
+      .returning();
+
+    return mapBoardClaimChallenge(row);
+  }
+
+  async bootstrapChiefExecutiveOfficer(input: {
+    token: string;
+    code: string;
+    email: string;
+    name: string;
+    password: string;
+    company: {
+      slug: string;
+      name: string;
+      description?: string;
+      brandColor?: string;
+      monthlyBudgetCents: number;
+    };
+  }): Promise<BootstrapCeoResult> {
+    if (await this.isBoardAlreadyClaimed()) {
+      throw new Error("board_already_claimed");
+    }
+
+    const [challenge] = await this.db
+      .select()
+      .from(schema.boardClaimChallenges)
+      .where(eq(schema.boardClaimChallenges.token, input.token));
+
+    if (!challenge || challenge.claimedAt || challenge.expiresAt < new Date() || challenge.code !== input.code) {
+      throw new Error("invalid_board_claim");
+    }
+
+    const user = await this.registerUser({
+      email: input.email,
+      name: input.name,
+      password: input.password,
+    });
+
+    const company = await this.createCompany(user.id, {
+      slug: input.company.slug,
+      name: input.company.name,
+      description: input.company.description,
+      brandColor: input.company.brandColor,
+      monthlyBudgetCents: input.company.monthlyBudgetCents,
+    });
+
+    const membership = await this.getMembership(user.id, company.id);
+    if (!membership) {
+      throw new Error("membership_not_created");
+    }
+
+    const [claimed] = await this.db
+      .update(schema.boardClaimChallenges)
+      .set({
+        claimedByUserId: user.id,
+        claimedAt: new Date(),
+      })
+      .where(eq(schema.boardClaimChallenges.id, challenge.id))
+      .returning();
+
+    await this.recordActivity({
+      companyId: company.id,
+      actorUserId: user.id,
+      kind: "board.claimed",
+      targetType: "board_claim",
+      targetId: claimed.id,
+      summary: `Bootstrapped board owner ${user.email}`,
+    });
+
+    return {
+      user,
+      company,
+      membership,
+      boardClaim: mapBoardClaimChallenge(claimed),
+    };
+  }
+
+  async createCliAuthChallenge(ttlMinutes: number, name?: string, requestedByUserId?: string | null): Promise<CliAuthChallengeStatus> {
+    const [row] = await this.db
+      .insert(schema.cliAuthChallenges)
+      .values({
+        challengeToken: createOpaqueToken("cli"),
+        name: name?.trim() || null,
+        requestedByUserId: requestedByUserId ?? null,
+        expiresAt: new Date(Date.now() + ttlMinutes * 60_000),
+      })
+      .returning();
+
+    return {
+      ...mapCliAuthChallenge(row),
+      boardToken: null,
+    };
+  }
+
+  async getCliAuthChallengeStatus(challengeId: string, challengeToken?: string): Promise<CliAuthChallengeStatus> {
+    const [row] = await this.db
+      .select()
+      .from(schema.cliAuthChallenges)
+      .where(eq(schema.cliAuthChallenges.id, challengeId));
+
+    if (!row) {
+      throw new Error("not_found");
+    }
+
+    let nextRow = row;
+    const canConsumeApprovedToken =
+      challengeToken &&
+      row.challengeToken === challengeToken &&
+      row.approvedToken &&
+      !row.consumedAt &&
+      row.expiresAt >= new Date();
+
+    if (canConsumeApprovedToken) {
+      const [updated] = await this.db
+        .update(schema.cliAuthChallenges)
+        .set({
+          consumedAt: new Date(),
+        })
+        .where(eq(schema.cliAuthChallenges.id, row.id))
+        .returning();
+
+      if (updated) {
+        nextRow = updated;
+      }
+    }
+
+    const status = mapCliAuthChallenge(nextRow);
+    return {
+      ...status,
+      boardToken: challengeToken && nextRow.challengeToken === challengeToken ? status.boardToken : null,
+    };
+  }
+
+  async approveCliAuthChallenge(
+    actorUserId: string,
+    challengeId: string,
+    challengeToken: string,
+  ): Promise<CliAuthChallengeStatus> {
+    const [challenge] = await this.db
+      .select()
+      .from(schema.cliAuthChallenges)
+      .where(eq(schema.cliAuthChallenges.id, challengeId));
+
+    if (!challenge) {
+      throw new Error("not_found");
+    }
+    if (challenge.expiresAt < new Date() || challenge.challengeToken !== challengeToken) {
+      throw new Error("invalid_cli_challenge");
+    }
+
+    const apiKey = await this.createBoardApiKeyRecord(actorUserId, challenge.name ? `CLI: ${challenge.name}` : "CLI session");
+
+    const [row] = await this.db
+      .update(schema.cliAuthChallenges)
+      .set({
+        approvedByUserId: actorUserId,
+        boardApiKeyId: apiKey.id,
+        approvedToken: apiKey.token,
+        approvedAt: new Date(),
+      })
+      .where(eq(schema.cliAuthChallenges.id, challenge.id))
+      .returning();
+
+    const status = mapCliAuthChallenge(row);
+    return status;
   }
 
   async registerUser(input: { email: string; name: string; password: string; inviteToken?: string | undefined }) {
@@ -1055,6 +1420,143 @@ export class PlatformService {
     return agent;
   }
 
+  async getAgentRuntimeState(actorUserId: string, agentId: string): Promise<AgentRuntimeState> {
+    const agent = await this.getAgentForActor(actorUserId, agentId);
+    const [heartbeat] = await this.db
+      .select()
+      .from(schema.heartbeatRuns)
+      .where(eq(schema.heartbeatRuns.agentId, agentId))
+      .orderBy(desc(schema.heartbeatRuns.createdAt))
+      .limit(1);
+
+    return {
+      agentId: agent.id,
+      status: agent.status,
+      sessionState: agent.sessionState,
+      lastHeartbeatAt: agent.lastHeartbeatAt,
+      lastHeartbeatRunId: heartbeat?.id ?? null,
+      lastHeartbeatStatus: heartbeat ? (heartbeat.status as HeartbeatRun["status"]) : null,
+      updatedAt: agent.updatedAt,
+    };
+  }
+
+  async listAgentSessions(actorUserId: string, agentId: string): Promise<AgentSession[]> {
+    const agent = await this.getAgent(agentId);
+    if (!agent) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, agent.companyId, "audit:read");
+    const rows = await this.db
+      .select()
+      .from(schema.agentSessions)
+      .where(eq(schema.agentSessions.agentId, agentId))
+      .orderBy(desc(schema.agentSessions.updatedAt));
+    return rows.map(mapAgentSession);
+  }
+
+  async pauseAgent(actorUserId: string, agentId: string): Promise<Agent> {
+    const agent = await this.getAgent(agentId);
+    if (!agent) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, agent.companyId, "agent:write");
+    const [row] = await this.db
+      .update(schema.agents)
+      .set({
+        status: "paused",
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.agents.id, agentId))
+      .returning();
+    await this.recordActivity({
+      companyId: agent.companyId,
+      actorUserId,
+      kind: "agent.paused",
+      targetType: "agent",
+      targetId: agentId,
+      summary: `Paused agent ${agent.name}`,
+    });
+    return mapAgent(row);
+  }
+
+  async resumeAgent(actorUserId: string, agentId: string): Promise<Agent> {
+    const agent = await this.getAgent(agentId);
+    if (!agent) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, agent.companyId, "agent:write");
+    const [row] = await this.db
+      .update(schema.agents)
+      .set({
+        status: "idle",
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.agents.id, agentId))
+      .returning();
+    await this.recordActivity({
+      companyId: agent.companyId,
+      actorUserId,
+      kind: "agent.resumed",
+      targetType: "agent",
+      targetId: agentId,
+      summary: `Resumed agent ${agent.name}`,
+    });
+    return mapAgent(row);
+  }
+
+  async terminateAgent(actorUserId: string, agentId: string): Promise<Agent> {
+    const agent = await this.getAgent(agentId);
+    if (!agent) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, agent.companyId, "agent:write");
+    const [row] = await this.db
+      .update(schema.agents)
+      .set({
+        status: "terminated",
+        sessionState: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.agents.id, agentId))
+      .returning();
+    await this.recordActivity({
+      companyId: agent.companyId,
+      actorUserId,
+      kind: "agent.terminated",
+      targetType: "agent",
+      targetId: agentId,
+      summary: `Terminated agent ${agent.name}`,
+    });
+    return mapAgent(row);
+  }
+
+  async createAgentApiKey(actorUserId: string, agentId: string, name: string): Promise<AgentApiKeyCreated> {
+    const agent = await this.getAgent(agentId);
+    if (!agent) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, agent.companyId, "agent:write");
+    const apiKey = await this.createAgentApiKeyRecord(agentId, name);
+    await this.recordActivity({
+      companyId: agent.companyId,
+      actorUserId,
+      kind: "agent.api_key_created",
+      targetType: "agent_api_key",
+      targetId: apiKey.id,
+      summary: `Created API key ${name} for ${agent.name}`,
+    });
+    return apiKey;
+  }
+
+  async prepareAgentAccess(actorUserId: string, agentId: string): Promise<Agent> {
+    const agent = await this.getAgent(agentId);
+    if (!agent) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, agent.companyId, "agent:write");
+    return agent;
+  }
+
   async resetAgentSession(actorUserId: string, agentId: string): Promise<Agent> {
     const agent = await this.getAgent(agentId);
     if (!agent) {
@@ -1077,6 +1579,25 @@ export class PlatformService {
     return mapAgent(row);
   }
 
+  async recordAgentSession(
+    agentId: string,
+    heartbeatRunId: string | null,
+    sessionState: Record<string, unknown> | null,
+    summary?: string | null,
+  ): Promise<AgentSession> {
+    const [row] = await this.db
+      .insert(schema.agentSessions)
+      .values({
+        agentId,
+        heartbeatRunId,
+        summary: summary ?? null,
+        sessionState,
+        updatedAt: new Date(),
+      })
+      .returning();
+    return mapAgentSession(row);
+  }
+
   async createTask(
     actorUserId: string,
     companyId: string,
@@ -1094,50 +1615,30 @@ export class PlatformService {
       metadata?: Record<string, unknown>;
     },
   ): Promise<Task> {
-    await this.requirePermission(actorUserId, companyId, "task:write");
-    const [task] = await this.db
-      .insert(schema.tasks)
-      .values({
-        companyId,
-        projectId: input.projectId ?? null,
-        goalId: input.goalId ?? null,
-        parentTaskId: input.parentTaskId ?? null,
-        assigneeAgentId: input.assigneeAgentId ?? null,
-        createdByUserId: actorUserId,
-        title: input.title,
-        description: input.description,
-        status: input.status,
-        priority: input.priority,
-        originKind: input.originKind,
-        originRef: input.originRef ?? null,
-        metadata: input.metadata ?? {},
-        updatedAt: new Date(),
-      })
-      .returning();
-    await this.recordActivity({
-      companyId,
-      actorUserId,
-      kind: "task.created",
-      targetType: "task",
-      targetId: task.id,
-      summary: `Created task ${task.title}`,
+    const issue = await this.createIssue(actorUserId, companyId, {
+      projectId: input.projectId,
+      goalId: input.goalId,
+      parentId: input.parentTaskId,
+      assigneeAgentId: input.assigneeAgentId,
+      title: input.title,
+      description: input.description,
+      status: input.status,
+      priority: input.priority,
+      originKind: input.originKind,
+      originRef: input.originRef,
+      metadata: input.metadata,
     });
-    return mapTask(task);
+    return taskFromIssue(issue);
   }
 
   async listTasks(actorUserId: string, companyId: string): Promise<Task[]> {
-    await this.requirePermission(actorUserId, companyId, "audit:read");
-    const rows = await this.db
-      .select()
-      .from(schema.tasks)
-      .where(eq(schema.tasks.companyId, companyId))
-      .orderBy(desc(schema.tasks.createdAt));
-    return rows.map(mapTask);
+    const issues = await this.listIssues(actorUserId, companyId);
+    return issues.map(taskFromIssue);
   }
 
   async getTask(taskId: string): Promise<Task | null> {
-    const [row] = await this.db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId));
-    return row ? mapTask(row) : null;
+    const issue = await this.getIssue(taskId);
+    return issue ? taskFromIssue(issue) : null;
   }
 
   async getTaskForActor(actorUserId: string, taskId: string): Promise<Task> {
@@ -1150,120 +1651,35 @@ export class PlatformService {
   }
 
   async updateTask(actorUserId: string, taskId: string, input: Partial<Omit<Task, "id" | "companyId" | "createdAt" | "updatedAt">>) {
-    const task = await this.getTask(taskId);
-    if (!task) {
-      throw new Error("not_found");
-    }
-    await this.requirePermission(actorUserId, task.companyId, "task:write");
-    const [row] = await this.db
-      .update(schema.tasks)
-      .set({
-        projectId: input.projectId ?? task.projectId,
-        goalId: input.goalId ?? task.goalId,
-        parentTaskId: input.parentTaskId ?? task.parentTaskId,
-        assigneeAgentId: input.assigneeAgentId ?? task.assigneeAgentId,
-        title: input.title ?? task.title,
-        description: input.description ?? task.description,
-        status: input.status ?? task.status,
-        priority: input.priority ?? task.priority,
-        originKind: input.originKind ?? task.originKind,
-        originRef: input.originRef ?? task.originRef,
-        metadata: input.metadata ?? task.metadata,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.tasks.id, taskId))
-      .returning();
-    await this.recordActivity({
-      companyId: task.companyId,
-      actorUserId,
-      kind: "task.updated",
-      targetType: "task",
-      targetId: taskId,
-      summary: `Updated task ${row.title}`,
+    const issue = await this.updateIssue(actorUserId, taskId, {
+      projectId: input.projectId,
+      goalId: input.goalId,
+      parentId: input.parentTaskId,
+      assigneeAgentId: input.assigneeAgentId,
+      title: input.title,
+      description: input.description,
+      status: input.status,
+      priority: input.priority,
+      originKind: input.originKind,
+      originRef: input.originRef,
+      metadata: input.metadata,
     });
-    return mapTask(row);
+    return taskFromIssue(issue);
   }
 
   async checkoutTask(actorUserId: string, taskId: string, agentId: string, heartbeatRunId?: string) {
-    const task = await this.getTask(taskId);
-    if (!task) {
-      throw new Error("not_found");
-    }
-    await this.requirePermission(actorUserId, task.companyId, "task:checkout");
-
-    const [row] = await this.db
-      .update(schema.tasks)
-      .set({
-        status: "in_progress",
-        assigneeAgentId: agentId,
-        checkoutHeartbeatRunId: heartbeatRunId ?? null,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(schema.tasks.id, taskId),
-          inArray(schema.tasks.status, ["backlog", "todo", "blocked"]),
-        ),
-      )
-      .returning();
-
-    if (!row) {
-      throw new Error("task_checkout_conflict");
-    }
-
-    await this.recordActivity({
-      companyId: task.companyId,
-      actorUserId,
-      kind: "task.checked_out",
-      targetType: "task",
-      targetId: taskId,
-      summary: `Checked out task ${row.title}`,
-      payload: { agentId, heartbeatRunId },
-    });
-
-    return mapTask(row);
+    const issue = await this.checkoutIssue(actorUserId, taskId, agentId, heartbeatRunId);
+    return taskFromIssue(issue);
   }
 
   async addTaskComment(actorUserId: string, taskId: string, body: string) {
-    const task = await this.getTask(taskId);
-    if (!task) {
-      throw new Error("not_found");
-    }
-    await this.requirePermission(actorUserId, task.companyId, "task:write");
-    const [row] = await this.db
-      .insert(schema.taskComments)
-      .values({
-        companyId: task.companyId,
-        taskId,
-        authorUserId: actorUserId,
-        body,
-      })
-      .returning();
-
-    await this.recordActivity({
-      companyId: task.companyId,
-      actorUserId,
-      kind: "task.commented",
-      targetType: "task_comment",
-      targetId: row.id,
-      summary: `Commented on task ${task.title}`,
-    });
-
-    return mapTaskComment(row);
+    const comment = await this.addIssueComment(actorUserId, taskId, body);
+    return taskCommentFromIssueComment(comment);
   }
 
   async listTaskComments(actorUserId: string, taskId: string): Promise<TaskComment[]> {
-    const task = await this.getTask(taskId);
-    if (!task) {
-      throw new Error("not_found");
-    }
-    await this.requirePermission(actorUserId, task.companyId, "audit:read");
-    const rows = await this.db
-      .select()
-      .from(schema.taskComments)
-      .where(eq(schema.taskComments.taskId, taskId))
-      .orderBy(asc(schema.taskComments.createdAt));
-    return rows.map(mapTaskComment);
+    const comments = await this.listIssueComments(actorUserId, taskId);
+    return comments.map(taskCommentFromIssueComment);
   }
 
   async createHeartbeatRun(companyId: string, agentId: string, triggerKind: HeartbeatRun["triggerKind"], triggerDetail?: string, taskId?: string | null) {

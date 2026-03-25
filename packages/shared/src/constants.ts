@@ -13,6 +13,7 @@ export const AGENT_ADAPTER_TYPES = [
   "gemini_cli",
   "opencode",
   "http_api",
+  "openclaw_gateway",
 ] as const;
 export type AgentAdapterType = (typeof AGENT_ADAPTER_TYPES)[number];
 
@@ -99,6 +100,10 @@ export const ACTIVITY_KINDS = [
   "task.commented",
   "agent.created",
   "agent.updated",
+  "agent.paused",
+  "agent.resumed",
+  "agent.terminated",
+  "agent.api_key_created",
   "agent.wake_requested",
   "heartbeat.created",
   "heartbeat.updated",
@@ -108,6 +113,9 @@ export const ACTIVITY_KINDS = [
   "plugin.created",
   "package.imported",
   "package.exported",
+  "board.claimed",
+  "auth.cli_challenge.created",
+  "auth.cli_challenge.approved",
 ] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 

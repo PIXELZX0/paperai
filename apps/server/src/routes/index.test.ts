@@ -3,6 +3,19 @@ import { createApp } from "../app.js";
 import type { PlatformService } from "../services/platform-service.js";
 import type { RuntimeOrchestrator } from "../services/runtime.js";
 
+const testConfig = {
+  host: "127.0.0.1",
+  port: 3001,
+  databaseUrl: "postgres://unused",
+  jwtSecret: "test-secret",
+  webOrigin: "http://localhost:5173",
+  auth: {
+    boardClaimTtlMinutes: 30,
+    cliChallengeTtlMinutes: 10,
+    agentTokenTtlMinutes: 60,
+  },
+} as const;
+
 function createRuntimeStub() {
   return {
     start: vi.fn(),
@@ -14,7 +27,11 @@ function createRuntimeStub() {
 
 function createPlatformServiceStub() {
   return {
+    createBoardClaimChallenge: vi.fn(),
     getAgentForActor: vi.fn(),
+    getAgentRuntimeState: vi.fn(),
+    pauseAgent: vi.fn(),
+    resumeAgent: vi.fn(),
     getTaskForActor: vi.fn(),
     getIssueForActor: vi.fn(),
     updateCompany: vi.fn(),
@@ -52,12 +69,7 @@ describe("resource read routes", () => {
     });
 
     const app = await createApp({
-      config: {
-        port: 3001,
-        databaseUrl: "postgres://unused",
-        jwtSecret: "test-secret",
-        webOrigin: "http://localhost:5173",
-      },
+      config: testConfig,
       platformService,
       runtime,
     });
@@ -83,12 +95,7 @@ describe("resource read routes", () => {
     vi.spyOn(platformService, "getTaskForActor").mockRejectedValue(new Error("not_found"));
 
     const app = await createApp({
-      config: {
-        port: 3001,
-        databaseUrl: "postgres://unused",
-        jwtSecret: "test-secret",
-        webOrigin: "http://localhost:5173",
-      },
+      config: testConfig,
       platformService,
       runtime,
     });
@@ -113,12 +120,7 @@ describe("resource read routes", () => {
     vi.spyOn(platformService, "getIssueForActor").mockRejectedValue(new Error("forbidden"));
 
     const app = await createApp({
-      config: {
-        port: 3001,
-        databaseUrl: "postgres://unused",
-        jwtSecret: "test-secret",
-        webOrigin: "http://localhost:5173",
-      },
+      config: testConfig,
       platformService,
       runtime,
     });
@@ -142,12 +144,7 @@ describe("resource read routes", () => {
     const platformService = createPlatformServiceStub();
 
     const app = await createApp({
-      config: {
-        port: 3001,
-        databaseUrl: "postgres://unused",
-        jwtSecret: "test-secret",
-        webOrigin: "http://localhost:5173",
-      },
+      config: testConfig,
       platformService,
       runtime,
     });
@@ -181,12 +178,7 @@ describe("resource read routes", () => {
     });
 
     const app = await createApp({
-      config: {
-        port: 3001,
-        databaseUrl: "postgres://unused",
-        jwtSecret: "test-secret",
-        webOrigin: "http://localhost:5173",
-      },
+      config: testConfig,
       platformService,
       runtime,
     });
@@ -234,12 +226,7 @@ describe("resource read routes", () => {
     ]);
 
     const app = await createApp({
-      config: {
-        port: 3001,
-        databaseUrl: "postgres://unused",
-        jwtSecret: "test-secret",
-        webOrigin: "http://localhost:5173",
-      },
+      config: testConfig,
       platformService,
       runtime,
     });
@@ -262,6 +249,85 @@ describe("resource read routes", () => {
       },
     ]);
     expect(listCompanyMembers).toHaveBeenCalledWith("user-1", "company-1");
+    await app.close();
+  });
+
+  it("creates a board claim challenge through POST /api/v1/setup/board-claim", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const createBoardClaimChallenge = vi.spyOn(platformService, "createBoardClaimChallenge").mockResolvedValue({
+      id: "claim-1",
+      token: "claim-token",
+      code: "123456",
+      claimedByUserId: null,
+      expiresAt: "2026-03-25T00:30:00.000Z",
+      createdAt: "2026-03-25T00:00:00.000Z",
+      claimedAt: null,
+    });
+
+    const app = await createApp({
+      config: testConfig,
+      platformService,
+      runtime,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/setup/board-claim",
+      payload: {
+        force: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ id: "claim-1", token: "claim-token" });
+    expect(createBoardClaimChallenge).toHaveBeenCalledWith(30, true);
+    await app.close();
+  });
+
+  it("resumes an agent and queues a wake through POST /api/v1/agents/:agentId/resume", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const resumeAgent = vi.spyOn(platformService, "resumeAgent").mockResolvedValue({
+      id: "agent-1",
+      companyId: "company-1",
+      parentAgentId: null,
+      slug: "ops",
+      name: "Ops",
+      title: "Operations",
+      capabilities: null,
+      status: "idle",
+      adapterType: "codex",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: [],
+      budgetMonthlyCents: 0,
+      spentMonthlyCents: 0,
+      sessionState: null,
+      lastHeartbeatAt: null,
+      createdAt: "2026-03-25T00:00:00.000Z",
+      updatedAt: "2026-03-25T00:00:00.000Z",
+    });
+
+    const app = await createApp({
+      config: testConfig,
+      platformService,
+      runtime,
+    });
+
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/agents/agent-1/resume",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ id: "agent-1", status: "idle" });
+    expect(resumeAgent).toHaveBeenCalledWith("user-1", "agent-1");
+    expect(runtime.requestWake).toHaveBeenCalledWith("company-1", "agent-1", "manual", "resume");
     await app.close();
   });
 });

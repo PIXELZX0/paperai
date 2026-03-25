@@ -2,8 +2,13 @@ import type { FastifyPluginAsync } from "fastify";
 import {
   checkoutIssueSchema,
   checkoutTaskSchema,
+  bootstrapCeoSchema,
   createAgentSchema,
+  createAgentAccessTokenSchema,
+  createAgentApiKeySchema,
   createApprovalSchema,
+  createBoardClaimChallengeSchema,
+  createCliAuthChallengeSchema,
   createCompanySchema,
   createGoalSchema,
   createIssueCommentSchema,
@@ -17,6 +22,7 @@ import {
   importCompanyPackageSchema,
   loginSchema,
   registerSchema,
+  approveCliAuthChallengeSchema,
   resolveApprovalSchema,
   updateCompanySchema,
   updateGoalSchema,
@@ -35,6 +41,16 @@ function parseCompanyId(input: unknown): string {
 export const routes: FastifyPluginAsync = async (app) => {
   app.get("/health", async () => ({ ok: true }));
 
+  app.post("/api/v1/setup/board-claim", async (request) => {
+    const payload = createBoardClaimChallengeSchema.parse(request.body);
+    return await app.platformService.createBoardClaimChallenge(app.paperaiConfig.auth.boardClaimTtlMinutes, payload.force);
+  });
+
+  app.post("/api/v1/setup/bootstrap-ceo", async (request) => {
+    const payload = bootstrapCeoSchema.parse(request.body);
+    return await app.platformService.bootstrapChiefExecutiveOfficer(payload);
+  });
+
   app.post("/api/v1/auth/register", async (request) => {
     const payload = registerSchema.parse(request.body);
     const user = await app.platformService.registerUser(payload);
@@ -47,6 +63,28 @@ export const routes: FastifyPluginAsync = async (app) => {
     const user = await app.platformService.login(payload);
     const token = app.jwt.sign({ sub: user.id, email: user.email });
     return { user, token };
+  });
+
+  app.post("/api/v1/auth/cli/challenges", async (request) => {
+    const payload = createCliAuthChallengeSchema.parse(request.body);
+    return await app.platformService.createCliAuthChallenge(app.paperaiConfig.auth.cliChallengeTtlMinutes, payload.name);
+  });
+
+  app.get("/api/v1/auth/cli/challenges/:challengeId", async (request) => {
+    const query = request.query as { challengeToken?: string };
+    return await app.platformService.getCliAuthChallengeStatus(
+      (request.params as { challengeId: string }).challengeId,
+      query.challengeToken,
+    );
+  });
+
+  app.post("/api/v1/auth/cli/challenges/:challengeId/approve", { preHandler: app.authenticate }, async (request) => {
+    const payload = approveCliAuthChallengeSchema.parse(request.body);
+    return await app.platformService.approveCliAuthChallenge(
+      request.user.sub,
+      (request.params as { challengeId: string }).challengeId,
+      payload.challengeToken,
+    );
   });
 
   app.get("/api/v1/me", { preHandler: app.authenticate }, async (request) => {
@@ -180,10 +218,33 @@ export const routes: FastifyPluginAsync = async (app) => {
     return await app.platformService.getAgentForActor(request.user.sub, (request.params as { agentId: string }).agentId);
   });
 
+  app.get("/api/v1/agents/:agentId/runtime", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.getAgentRuntimeState(request.user.sub, (request.params as { agentId: string }).agentId);
+  });
+
+  app.get("/api/v1/agents/:agentId/sessions", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.listAgentSessions(request.user.sub, (request.params as { agentId: string }).agentId);
+  });
+
   app.post("/api/v1/agents", { preHandler: app.authenticate }, async (request) => {
     const query = request.query as { companyId?: string };
     const payload = createAgentSchema.parse(request.body);
     return await app.platformService.createAgent(request.user.sub, parseCompanyId(query.companyId), payload);
+  });
+
+  app.post("/api/v1/agents/:agentId/pause", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.pauseAgent(request.user.sub, (request.params as { agentId: string }).agentId);
+  });
+
+  app.post("/api/v1/agents/:agentId/resume", { preHandler: app.authenticate }, async (request) => {
+    const agentId = (request.params as { agentId: string }).agentId;
+    const resumed = await app.platformService.resumeAgent(request.user.sub, agentId);
+    await app.runtime.requestWake(resumed.companyId, resumed.id, "manual", "resume");
+    return resumed;
+  });
+
+  app.post("/api/v1/agents/:agentId/terminate", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.terminateAgent(request.user.sub, (request.params as { agentId: string }).agentId);
   });
 
   app.post("/api/v1/agents/:agentId/wake", { preHandler: app.authenticate }, async (request) => {
@@ -194,6 +255,35 @@ export const routes: FastifyPluginAsync = async (app) => {
     }
     await app.platformService.requirePermission(request.user.sub, agent.companyId, "agent:wake");
     return await app.runtime.requestWake(agent.companyId, agent.id, "manual");
+  });
+
+  app.post("/api/v1/agents/:agentId/api-keys", { preHandler: app.authenticate }, async (request) => {
+    const payload = createAgentApiKeySchema.parse(request.body);
+    return await app.platformService.createAgentApiKey(
+      request.user.sub,
+      (request.params as { agentId: string }).agentId,
+      payload.name,
+    );
+  });
+
+  app.post("/api/v1/agents/:agentId/access-token", { preHandler: app.authenticate }, async (request) => {
+    const payload = createAgentAccessTokenSchema.parse(request.body);
+    const agent = await app.platformService.prepareAgentAccess(request.user.sub, (request.params as { agentId: string }).agentId);
+    const expiresInMinutes = payload.expiresInMinutes ?? app.paperaiConfig.auth.agentTokenTtlMinutes;
+    const expiresAt = new Date(Date.now() + expiresInMinutes * 60_000).toISOString();
+    const token = app.jwt.sign(
+      {
+        sub: agent.id,
+        type: "agent",
+        agentId: agent.id,
+      },
+      { expiresIn: `${expiresInMinutes}m` },
+    );
+    return {
+      agentId: agent.id,
+      expiresAt,
+      token,
+    };
   });
 
   app.post("/api/v1/agents/:agentId/test", { preHandler: app.authenticate }, async (request) => {
@@ -208,6 +298,10 @@ export const routes: FastifyPluginAsync = async (app) => {
 
   app.post("/api/v1/agents/:agentId/reset-session", { preHandler: app.authenticate }, async (request) => {
     return await app.platformService.resetAgentSession(request.user.sub, (request.params as { agentId: string }).agentId);
+  });
+
+  app.get("/api/v1/agents/me", { preHandler: app.authenticateAgent }, async (request) => {
+    return request.agent;
   });
 
   app.get("/api/v1/tasks", { preHandler: app.authenticate }, async (request) => {

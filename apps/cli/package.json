@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@paperai/company-package": "workspace:*",
+    "@paperai/db": "workspace:*",
+    "@paperai/server": "workspace:*",
     "@paperai/plugin-sdk": "workspace:*",
     "@paperai/shared": "workspace:*",
     "commander": "^13.1.0"

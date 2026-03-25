@@ -161,6 +161,14 @@ export class RuntimeOrchestrator {
       return;
     }
 
+    if (agent.status === "paused" || agent.status === "terminated") {
+      await this.service.completeHeartbeat(run.id, {
+        status: "cancelled",
+        error: agent.status === "paused" ? "agent_paused" : "agent_terminated",
+      });
+      return;
+    }
+
     const companies = await this.service.db.select().from(schema.companies).where(eq(schema.companies.id, agent.companyId));
     const companyRow = companies[0];
     if (!companyRow) {
@@ -211,71 +219,96 @@ export class RuntimeOrchestrator {
       return;
     }
 
+    await this.service.updateAgentRuntimeState(agent.id, {
+      status: "running",
+      lastHeartbeatAt: new Date().toISOString(),
+    });
+
     let task = run.taskId ? await this.service.getTask(run.taskId) : await this.pickTask(agent);
 
     if (task && task.status !== "in_progress") {
       task = await this.checkoutTaskForAgent(task, agent, run.id);
     }
 
-    const instructions = buildExecutionInstructions(company, agent, task);
-    const result = await adapter.execute({
-      company,
-      agent,
-      task,
-      instructions,
-      env: {
-        PAPERAI_HEARTBEAT_RUN_ID: run.id,
-      },
-      session: agent.sessionState,
-      cwd: typeof agent.runtimeConfig.cwd === "string" ? agent.runtimeConfig.cwd : undefined,
-    });
+    try {
+      const instructions = buildExecutionInstructions(company, agent, task);
+      const result = await adapter.execute({
+        company,
+        agent,
+        task,
+        instructions,
+        env: {
+          PAPERAI_HEARTBEAT_RUN_ID: run.id,
+        },
+        session: agent.sessionState,
+        cwd: typeof agent.runtimeConfig.cwd === "string" ? agent.runtimeConfig.cwd : undefined,
+      });
 
-    const costCents = result.usage?.costCents ?? 0;
-    await this.service.updateAgentRuntimeState(agent.id, {
-      status: result.ok ? "idle" : "error",
-      sessionState: result.session ?? null,
-      lastHeartbeatAt: new Date().toISOString(),
-      spentMonthlyCents: agent.spentMonthlyCents + costCents,
-    });
-    await this.service.updateCompanySpend(company.id, costCents);
+      const costCents = result.usage?.costCents ?? 0;
+      await this.service.updateAgentRuntimeState(agent.id, {
+        status: result.ok ? "idle" : "error",
+        sessionState: result.session ?? null,
+        lastHeartbeatAt: new Date().toISOString(),
+        spentMonthlyCents: agent.spentMonthlyCents + costCents,
+      });
+      await this.service.recordAgentSession(
+        agent.id,
+        run.id,
+        result.session ?? null,
+        result.transcript
+          .map((entry) => entry.message.trim())
+          .find((message) => message.length > 0)
+          ?.slice(0, 240) ?? null,
+      );
+      await this.service.updateCompanySpend(company.id, costCents);
 
-    if (costCents > 0) {
-      await this.service.addCostEvent({
-        companyId: company.id,
-        agentId: agent.id,
-        heartbeatRunId: run.id,
-        amountCents: costCents,
-        currency: "USD",
-        provider: result.usage?.provider ?? agent.adapterType,
-        model: result.usage?.model ?? null,
-        direction: "debit",
+      if (costCents > 0) {
+        await this.service.addCostEvent({
+          companyId: company.id,
+          agentId: agent.id,
+          heartbeatRunId: run.id,
+          amountCents: costCents,
+          currency: "USD",
+          provider: result.usage?.provider ?? agent.adapterType,
+          model: result.usage?.model ?? null,
+          direction: "debit",
+        });
+      }
+
+      if (task) {
+        await this.service.updateTask(agent.id, task.id, {
+          status: result.ok ? "in_review" : "blocked",
+        });
+        const textLog = result.transcript.map((entry) => `[${entry.type}] ${entry.message}`).join("\n");
+        await this.service.db.insert(schema.taskComments).values({
+          companyId: task.companyId,
+          taskId: task.id,
+          authorAgentId: agent.id,
+          body: textLog.slice(0, 4000) || (result.ok ? "Heartbeat completed." : "Heartbeat failed."),
+        });
+      }
+
+      const heartbeat = await this.service.completeHeartbeat(run.id, {
+        status: result.ok ? "succeeded" : "failed",
+        error: result.error,
+        usage: (result.usage as unknown as Record<string, unknown> | undefined) ?? undefined,
+        result: result.result,
+        log: result.transcript.map((entry) => `[${entry.type}] ${entry.message}`).join("\n"),
+        costCents,
+        sessionBefore: agent.sessionState,
+        sessionAfter: result.session ?? null,
+      });
+
+      this.eventBus.publish("heartbeat.completed", heartbeat);
+    } catch (error) {
+      await this.service.updateAgentRuntimeState(agent.id, {
+        status: "error",
+        lastHeartbeatAt: new Date().toISOString(),
+      });
+      await this.service.completeHeartbeat(run.id, {
+        status: "failed",
+        error: error instanceof Error ? error.message : "heartbeat_execution_failed",
       });
     }
-
-    if (task) {
-      await this.service.updateTask(agent.id, task.id, {
-        status: result.ok ? "in_review" : "blocked",
-      });
-      const textLog = result.transcript.map((entry) => `[${entry.type}] ${entry.message}`).join("");
-      await this.service.db.insert(schema.taskComments).values({
-        companyId: task.companyId,
-        taskId: task.id,
-        authorAgentId: agent.id,
-        body: textLog.slice(0, 4000) || (result.ok ? "Heartbeat completed." : "Heartbeat failed."),
-      });
-    }
-
-    const heartbeat = await this.service.completeHeartbeat(run.id, {
-      status: result.ok ? "succeeded" : "failed",
-      error: result.error,
-      usage: (result.usage as unknown as Record<string, unknown> | undefined) ?? undefined,
-      result: result.result,
-      log: result.transcript.map((entry) => `[${entry.type}] ${entry.message}`).join(""),
-      costCents,
-      sessionBefore: agent.sessionState,
-      sessionAfter: result.session ?? null,
-    });
-
-    this.eventBus.publish("heartbeat.completed", heartbeat);
   }
 }

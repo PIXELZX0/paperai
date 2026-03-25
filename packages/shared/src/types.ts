@@ -361,5 +361,225 @@ export interface CompanyPackageManifest {
 
 export interface AuthTokenPayload {
   sub: string;
-  email: string;
+  email?: string;
+  type?: "user" | "agent";
+  agentId?: string | null;
+  boardApiKeyId?: string | null;
+  agentApiKeyId?: string | null;
+}
+
+export interface AgentRuntimeState {
+  agentId: string;
+  status: Agent["status"];
+  sessionState: Agent["sessionState"];
+  lastHeartbeatAt: string | null;
+  lastHeartbeatRunId: string | null;
+  lastHeartbeatStatus: HeartbeatRun["status"] | null;
+  updatedAt: string;
+}
+
+export interface AgentSession {
+  id: string;
+  agentId: string;
+  heartbeatRunId: string | null;
+  summary: string | null;
+  sessionState: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentApiKeyCreated {
+  id: string;
+  agentId: string;
+  name: string;
+  token: string;
+  createdAt: string;
+}
+
+export interface BoardApiKeyCreated {
+  id: string;
+  userId: string;
+  name: string;
+  token: string;
+  createdAt: string;
+}
+
+export interface BoardClaimChallenge {
+  id: string;
+  token: string;
+  code: string;
+  claimedByUserId: string | null;
+  expiresAt: string;
+  createdAt: string;
+  claimedAt: string | null;
+}
+
+export interface CliAuthChallenge {
+  id: string;
+  challengeToken: string;
+  requestedByUserId: string | null;
+  approvedByUserId: string | null;
+  boardApiKeyId: string | null;
+  approved: boolean;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface CliAuthChallengeStatus extends CliAuthChallenge {
+  approvedAt: string | null;
+  consumedAt: string | null;
+  boardToken: string | null;
+  name: string | null;
+}
+
+export interface BootstrapCeoResult {
+  user: AuthUser;
+  company: Company;
+  membership: Membership;
+  boardClaim: BoardClaimChallenge;
+}
+
+export interface AgentAccessTokenCreated {
+  agentId: string;
+  expiresAt: string;
+  token: string;
+}
+
+export interface ProjectWorkspace {
+  id: string;
+  companyId: string;
+  projectId: string;
+  name: string;
+  cwd: string | null;
+  repoUrl: string | null;
+  repoRef: string | null;
+  isPrimary: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExecutionWorkspace {
+  id: string;
+  companyId: string;
+  projectId: string | null;
+  issueId: string | null;
+  name: string;
+  cwd: string | null;
+  repoUrl: string | null;
+  baseRef: string | null;
+  branchName: string | null;
+  mode: "shared_workspace" | "isolated_workspace" | "adapter_managed";
+  status: "active" | "idle" | "archived";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CompanySkill {
+  id: string;
+  companyId: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  markdown: string;
+  sourceType: "local_path" | "github" | "url";
+  sourceLocator: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Secret {
+  id: string;
+  companyId: string;
+  name: string;
+  provider: "local";
+  valueHint: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IssueDocumentSummary {
+  id: string;
+  issueId: string;
+  key: string;
+  title: string;
+  format: "markdown" | "text";
+  latestRevisionId: string | null;
+  updatedAt: string;
+}
+
+export interface IssueDocument extends IssueDocumentSummary {
+  body: string;
+}
+
+export interface IssueAttachment {
+  id: string;
+  companyId: string;
+  issueId: string;
+  name: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export interface IssueWorkProduct {
+  id: string;
+  issueId: string;
+  kind: string;
+  title: string;
+  content: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CostSummary {
+  monthSpendCents: number;
+  companyBudgetCents: number;
+  utilizationRatio: number;
+}
+
+export interface CostSummaryByAgent {
+  agentId: string;
+  amountCents: number;
+}
+
+export interface CostSummaryByProject {
+  projectId: string | null;
+  amountCents: number;
+}
+
+export interface CostSummaryByProvider {
+  provider: string;
+  amountCents: number;
+}
+
+export interface PaperAiDatabaseBackupConfig {
+  dir: string;
+}
+
+export interface PaperAiDatabaseConfig {
+  mode: "embedded-postgres" | "postgres";
+  connectionString?: string;
+  embeddedDataDir: string;
+  embeddedPort: number;
+  backup: PaperAiDatabaseBackupConfig;
+}
+
+export interface PaperAiServerConfig {
+  host: string;
+  port: number;
+  webOrigin: string;
+  jwtSecret: string;
+}
+
+export interface PaperAiAuthConfig {
+  boardClaimTtlMinutes: number;
+  cliChallengeTtlMinutes: number;
+  agentTokenTtlMinutes: number;
+}
+
+export interface PaperAiConfig {
+  version: 1;
+  database: PaperAiDatabaseConfig;
+  server: PaperAiServerConfig;
+  auth: PaperAiAuthConfig;
 }
