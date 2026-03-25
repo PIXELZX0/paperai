@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { DomainEventBus } from "@paperai/core";
 import { hasBoardPermission } from "@paperai/core";
 import { parseCompanyPackage, exportCompanyPackage } from "@paperai/company-package";
@@ -9,7 +9,6 @@ import type {
   ActivityEvent,
   Agent,
   ApprovalRequest,
-  AuthTokenPayload,
   AuthUser,
   BoardPermission,
   BudgetPolicy,

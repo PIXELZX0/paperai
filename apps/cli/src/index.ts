@@ -41,7 +41,7 @@ program
     );
     await writeFile(
       path.join(dir, "agents", "ceo", "AGENTS.md"),
-      `---\nkind: agent\nslug: ceo\nname: CEO\ntitle: Chief Executive Officer\n---\n\nCoordinate strategy, goals, and approvals.\n`,
+      `---\nkind: agent\nslug: ceo\nname: CEO\ntitle: Chief Executive Officer\n---\n\nOwn company strategy, identity, and governance. Define the company's positioning, tone of voice, and visual direction before delegating downstream work. Create and maintain the canonical \`design_guide.md\` so product, marketing, and internal tools follow one consistent design system and brand standard. Coordinate strategy, goals, and approvals.\n`,
     );
     await writeFile(
       path.join(dir, ".zero.yaml"),

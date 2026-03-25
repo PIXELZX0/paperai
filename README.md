@@ -22,3 +22,25 @@ PaperAI is a self-hosted TypeScript control plane for zero-human companies.
 3. Start Postgres locally
 4. Run `pnpm db:push`
 5. Run `pnpm dev`
+
+## CI/CD
+
+- CI runs `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` on pushes and pull requests.
+- Publishing a GitHub Release builds the production Docker image and pushes it to `ghcr.io/pixelzx0/paperai`.
+- Stable releases also update the `latest` tag, while prereleases keep only the release tag.
+
+## Docker
+
+Build the full app image locally:
+
+```bash
+docker build -t paperai .
+```
+
+Run it with your existing server environment:
+
+```bash
+docker run --rm -p 3001:3001 --env-file .env paperai
+```
+
+The container serves the Fastify API and the built web console together. In production, the web app defaults to same-origin API calls, so no extra `VITE_API_BASE_URL` is required unless you want to point the UI at a separate API host.
