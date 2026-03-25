@@ -1,0 +1,15 @@
+{
+  "name": "@paperai/adapter-local-process",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@paperai/adapter-sdk": "workspace:*"
+  }
+}

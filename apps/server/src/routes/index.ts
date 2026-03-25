@@ -1,0 +1,263 @@
+import type { FastifyPluginAsync } from "fastify";
+import {
+  checkoutTaskSchema,
+  createAgentSchema,
+  createApprovalSchema,
+  createCompanySchema,
+  createGoalSchema,
+  createInviteSchema,
+  createPluginSchema,
+  createProjectSchema,
+  createRoutineSchema,
+  createTaskCommentSchema,
+  createTaskSchema,
+  importCompanyPackageSchema,
+  loginSchema,
+  registerSchema,
+  resolveApprovalSchema,
+  updateTaskSchema,
+} from "@paperai/shared";
+
+function parseCompanyId(input: unknown): string {
+  if (typeof input !== "string" || input.length === 0) {
+    throw new Error("companyId_required");
+  }
+  return input;
+}
+
+export const routes: FastifyPluginAsync = async (app) => {
+  app.get("/health", async () => ({ ok: true }));
+
+  app.post("/api/v1/auth/register", async (request) => {
+    const payload = registerSchema.parse(request.body);
+    const user = await app.platformService.registerUser(payload);
+    const token = app.jwt.sign({ sub: user.id, email: user.email });
+    return { user, token };
+  });
+
+  app.post("/api/v1/auth/login", async (request) => {
+    const payload = loginSchema.parse(request.body);
+    const user = await app.platformService.login(payload);
+    const token = app.jwt.sign({ sub: user.id, email: user.email });
+    return { user, token };
+  });
+
+  app.get("/api/v1/me", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.getUser(request.user.sub);
+  });
+
+  app.get("/api/v1/companies", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.listCompaniesForUser(request.user.sub);
+  });
+
+  app.post("/api/v1/companies", { preHandler: app.authenticate }, async (request) => {
+    const payload = createCompanySchema.parse(request.body);
+    return await app.platformService.createCompany(request.user.sub, payload);
+  });
+
+  app.get("/api/v1/memberships", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listMemberships(companyId);
+  });
+
+  app.get("/api/v1/companies/:companyId/invites", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.listInvites(request.user.sub, (request.params as { companyId: string }).companyId);
+  });
+
+  app.post("/api/v1/companies/:companyId/invites", { preHandler: app.authenticate }, async (request) => {
+    const payload = createInviteSchema.parse(request.body);
+    return await app.platformService.createInvite(request.user.sub, (request.params as { companyId: string }).companyId, payload);
+  });
+
+  app.get("/api/v1/goals", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listGoals(request.user.sub, companyId);
+  });
+
+  app.post("/api/v1/goals", { preHandler: app.authenticate }, async (request) => {
+    const query = request.query as { companyId?: string };
+    const payload = createGoalSchema.parse(request.body);
+    return await app.platformService.createGoal(request.user.sub, parseCompanyId(query.companyId), payload);
+  });
+
+  app.get("/api/v1/projects", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listProjects(request.user.sub, companyId);
+  });
+
+  app.post("/api/v1/projects", { preHandler: app.authenticate }, async (request) => {
+    const query = request.query as { companyId?: string };
+    const payload = createProjectSchema.parse(request.body);
+    return await app.platformService.createProject(request.user.sub, parseCompanyId(query.companyId), payload);
+  });
+
+  app.get("/api/v1/agents", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listAgents(request.user.sub, companyId);
+  });
+
+  app.post("/api/v1/agents", { preHandler: app.authenticate }, async (request) => {
+    const query = request.query as { companyId?: string };
+    const payload = createAgentSchema.parse(request.body);
+    return await app.platformService.createAgent(request.user.sub, parseCompanyId(query.companyId), payload);
+  });
+
+  app.post("/api/v1/agents/:agentId/wake", { preHandler: app.authenticate }, async (request) => {
+    const params = request.params as { agentId: string };
+    const agent = await app.platformService.getAgent(params.agentId);
+    if (!agent) {
+      throw new Error("not_found");
+    }
+    await app.platformService.requirePermission(request.user.sub, agent.companyId, "agent:wake");
+    return await app.runtime.requestWake(agent.companyId, agent.id, "manual");
+  });
+
+  app.post("/api/v1/agents/:agentId/test", { preHandler: app.authenticate }, async (request) => {
+    const params = request.params as { agentId: string };
+    const agent = await app.platformService.getAgent(params.agentId);
+    if (!agent) {
+      throw new Error("not_found");
+    }
+    await app.platformService.requirePermission(request.user.sub, agent.companyId, "agent:wake");
+    return await app.runtime.testAgent(params.agentId);
+  });
+
+  app.post("/api/v1/agents/:agentId/reset-session", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.resetAgentSession(request.user.sub, (request.params as { agentId: string }).agentId);
+  });
+
+  app.get("/api/v1/tasks", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listTasks(request.user.sub, companyId);
+  });
+
+  app.post("/api/v1/tasks", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    const payload = createTaskSchema.parse(request.body);
+    return await app.platformService.createTask(request.user.sub, companyId, payload);
+  });
+
+  app.patch("/api/v1/tasks/:taskId", { preHandler: app.authenticate }, async (request) => {
+    const payload = updateTaskSchema.parse(request.body);
+    return await app.platformService.updateTask(request.user.sub, (request.params as { taskId: string }).taskId, payload);
+  });
+
+  app.post("/api/v1/tasks/:taskId/checkout", { preHandler: app.authenticate }, async (request) => {
+    const payload = checkoutTaskSchema.parse(request.body);
+    return await app.platformService.checkoutTask(request.user.sub, (request.params as { taskId: string }).taskId, payload.agentId, payload.heartbeatRunId);
+  });
+
+  app.get("/api/v1/tasks/:taskId/comments", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.listTaskComments(request.user.sub, (request.params as { taskId: string }).taskId);
+  });
+
+  app.post("/api/v1/tasks/:taskId/comments", { preHandler: app.authenticate }, async (request) => {
+    const payload = createTaskCommentSchema.parse(request.body);
+    return await app.platformService.addTaskComment(request.user.sub, (request.params as { taskId: string }).taskId, payload.body);
+  });
+
+  app.get("/api/v1/heartbeats", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listHeartbeats(request.user.sub, companyId);
+  });
+
+  app.get("/api/v1/approvals", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listApprovals(request.user.sub, companyId);
+  });
+
+  app.post("/api/v1/approvals", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    const payload = createApprovalSchema.parse(request.body);
+    return await app.platformService.createApproval(request.user.sub, companyId, payload);
+  });
+
+  app.post("/api/v1/approvals/:approvalId/resolve", { preHandler: app.authenticate }, async (request) => {
+    const payload = resolveApprovalSchema.parse(request.body);
+    return await app.platformService.resolveApproval(
+      request.user.sub,
+      (request.params as { approvalId: string }).approvalId,
+      payload.status,
+      payload.resolutionNotes,
+    );
+  });
+
+  app.get("/api/v1/budgets", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listBudgets(request.user.sub, companyId);
+  });
+
+  app.post("/api/v1/budgets", { preHandler: app.authenticate }, async (request) => {
+    const query = request.query as { companyId?: string };
+    return await app.platformService.upsertBudgetPolicy(
+      request.user.sub,
+      parseCompanyId(query.companyId),
+      request.body as { agentId?: string | null; monthlyLimitCents: number; hardStop: boolean },
+    );
+  });
+
+  app.get("/api/v1/costs", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listCosts(request.user.sub, companyId);
+  });
+
+  app.get("/api/v1/activity", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listActivity(request.user.sub, companyId);
+  });
+
+  app.get("/api/v1/routines", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listRoutines(request.user.sub, companyId);
+  });
+
+  app.post("/api/v1/routines", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    const payload = createRoutineSchema.parse(request.body);
+    return await app.platformService.createRoutine(request.user.sub, companyId, payload);
+  });
+
+  app.get("/api/v1/plugins", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listPlugins(request.user.sub, companyId);
+  });
+
+  app.post("/api/v1/plugins", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    const payload = createPluginSchema.parse(request.body);
+    return await app.platformService.createPlugin(request.user.sub, companyId, payload);
+  });
+
+  app.post("/api/v1/plugins/validate", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.validatePlugin(request.user.sub, companyId, request.body as Record<string, unknown>);
+  });
+
+  app.post("/api/v1/packages/import", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    const payload = importCompanyPackageSchema.parse(request.body);
+    return await app.platformService.importCompanyPackage(request.user.sub, companyId, payload.root);
+  });
+
+  app.get("/api/v1/packages/export", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.exportCompanyAsPackage(request.user.sub, companyId);
+  });
+
+  app.get("/api/v1/events", { preHandler: app.authenticate }, async (request, reply) => {
+    reply.raw.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    });
+
+    const unsubscribe = app.eventBus.subscribe((event) => {
+      reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+    });
+
+    request.raw.on("close", () => {
+      unsubscribe();
+      reply.raw.end();
+    });
+  });
+};

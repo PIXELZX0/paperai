@@ -1,0 +1,30 @@
+{
+  "name": "@paperai/server",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup --config tsup.config.ts",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.1",
+    "@fastify/jwt": "^9.1.0",
+    "@paperai/adapter-http-api": "workspace:*",
+    "@paperai/adapter-claude-code": "workspace:*",
+    "@paperai/adapter-codex": "workspace:*",
+    "@paperai/adapter-gemini-cli": "workspace:*",
+    "@paperai/adapter-opencode": "workspace:*",
+    "@paperai/company-package": "workspace:*",
+    "@paperai/core": "workspace:*",
+    "@paperai/db": "workspace:*",
+    "@paperai/plugin-sdk": "workspace:*",
+    "@paperai/shared": "workspace:*",
+    "dotenv": "^16.5.0",
+    "drizzle-orm": "^0.43.1",
+    "fastify": "^5.3.2"
+  }
+}
