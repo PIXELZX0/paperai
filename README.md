@@ -58,8 +58,8 @@ binary remains available as a compatibility alias for `papercli`.
 ## CI/CD
 
 - CI runs `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` on pushes and pull requests.
-- Publishing a GitHub Release builds the production Docker image and pushes it to `ghcr.io/pixelzx0/paperai`.
-- Stable releases also update the `latest` tag, while prereleases keep only the release tag.
+- Publishing a GitHub Release builds the production Docker image and pushes it to `yuchanshin/paperai`.
+- GitHub Releases push `latest` plus the release tag, and pushes to `main` publish `test-latest` plus a timestamped `test-YYYY-MM-DD-HH-MM-SS` tag.
 
 ## Docker
 
