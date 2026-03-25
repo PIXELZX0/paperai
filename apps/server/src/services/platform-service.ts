@@ -13,6 +13,7 @@ import type {
   BoardPermission,
   BudgetPolicy,
   Company,
+  CompanyMember,
   CompanyPackageManifest,
   CostEvent,
   Goal,
@@ -66,6 +67,20 @@ function mapMembership(row: typeof schema.memberships.$inferSelect): Membership 
     userId: row.userId,
     role: row.role as MembershipRole,
     createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapCompanyMember(
+  membership: Membership,
+  user: Pick<typeof schema.users.$inferSelect, "id" | "email" | "name">,
+): CompanyMember {
+  return {
+    ...membership,
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+    },
   };
 }
 
@@ -477,6 +492,48 @@ export class PlatformService {
     return mapCompany(company);
   }
 
+  async updateCompany(
+    actorUserId: string,
+    companyId: string,
+    input: Partial<Pick<Company, "slug" | "name" | "description" | "status" | "brandColor" | "monthlyBudgetCents">>,
+  ): Promise<Company> {
+    const [existing] = await this.db.select().from(schema.companies).where(eq(schema.companies.id, companyId));
+    if (!existing) {
+      throw new Error("not_found");
+    }
+
+    await this.requirePermission(actorUserId, companyId, "company:update");
+
+    const [company] = await this.db
+      .update(schema.companies)
+      .set({
+        slug: input.slug ?? existing.slug,
+        name: input.name ?? existing.name,
+        description: input.description === undefined ? existing.description : input.description,
+        status: input.status ?? (existing.status as Company["status"]),
+        brandColor: input.brandColor === undefined ? existing.brandColor : input.brandColor,
+        monthlyBudgetCents: input.monthlyBudgetCents ?? existing.monthlyBudgetCents,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.companies.id, companyId))
+      .returning();
+
+    await this.recordActivity({
+      companyId,
+      actorUserId,
+      kind: "company.updated",
+      targetType: "company",
+      targetId: company.id,
+      summary: `Updated company ${company.name}`,
+      payload: {
+        slug: company.slug,
+        status: company.status,
+      },
+    });
+
+    return mapCompany(company);
+  }
+
   async getMembership(userId: string, companyId: string): Promise<Membership | null> {
     const [membership] = await this.db
       .select()
@@ -493,13 +550,46 @@ export class PlatformService {
     return membership;
   }
 
-  async listMemberships(companyId: string): Promise<Membership[]> {
+  async listMemberships(actorUserId: string, companyId: string): Promise<Membership[]> {
+    await this.requirePermission(actorUserId, companyId, "audit:read");
     const rows = await this.db
       .select()
       .from(schema.memberships)
       .where(eq(schema.memberships.companyId, companyId))
       .orderBy(asc(schema.memberships.createdAt));
     return rows.map(mapMembership);
+  }
+
+  async listCompanyMembers(actorUserId: string, companyId: string): Promise<CompanyMember[]> {
+    const memberships = await this.listMemberships(actorUserId, companyId);
+    if (memberships.length === 0) {
+      return [];
+    }
+
+    const users = await this.db
+      .select({
+        id: schema.users.id,
+        email: schema.users.email,
+        name: schema.users.name,
+      })
+      .from(schema.users)
+      .where(
+        inArray(
+          schema.users.id,
+          memberships.map((membership) => membership.userId),
+        ),
+      );
+
+    const userById = new Map(users.map((user) => [user.id, user]));
+    return memberships
+      .map((membership) => {
+        const user = userById.get(membership.userId);
+        if (!user) {
+          return null;
+        }
+        return mapCompanyMember(membership, user);
+      })
+      .filter((member): member is CompanyMember => Boolean(member));
   }
 
   async createInvite(actorUserId: string, companyId: string, input: { email: string; role: MembershipRole }) {

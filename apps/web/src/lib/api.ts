@@ -1,12 +1,15 @@
 import type {
+  ActivityEvent,
   Agent,
   ApprovalRequest,
   Company,
+  CompanyMember,
   CostEvent,
   Goal,
   HeartbeatRun,
   Issue,
   IssueComment,
+  Invite,
   Plugin,
   Project,
   Routine,
@@ -20,6 +23,7 @@ const API_BASE =
 export interface SessionState {
   token: string | null;
   user: { id: string; email: string; name: string } | null;
+  selectedCompanyId?: string | null;
 }
 
 export function loadSession(): SessionState {
@@ -64,14 +68,27 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
-  register: (name: string, email: string, password: string) =>
+  register: (name: string, email: string, password: string, inviteToken?: string) =>
     apiRequest<{ token: string; user: SessionState["user"] }>("/auth/register", null, {
       method: "POST",
-      body: JSON.stringify({ name, email, password }),
+      body: JSON.stringify({ name, email, password, inviteToken: inviteToken || undefined }),
     }),
   companies: (token: string) => apiRequest<Company[]>("/companies", token),
   createCompany: (token: string, payload: Record<string, unknown>) =>
     apiRequest<Company>("/companies", token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateCompany: (token: string, companyId: string, payload: Record<string, unknown>) =>
+    apiRequest<Company>(`/companies/${companyId}`, token, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  companyMembers: (token: string, companyId: string) =>
+    apiRequest<CompanyMember[]>(`/companies/${companyId}/members`, token),
+  invites: (token: string, companyId: string) => apiRequest<Invite[]>(`/companies/${companyId}/invites`, token),
+  createInvite: (token: string, companyId: string, payload: Record<string, unknown>) =>
+    apiRequest<Invite>(`/companies/${companyId}/invites`, token, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
@@ -127,6 +144,7 @@ export const api = {
     }),
   heartbeats: (token: string, companyId: string) => apiRequest<HeartbeatRun[]>(`/heartbeats?companyId=${companyId}`, token),
   costs: (token: string, companyId: string) => apiRequest<CostEvent[]>(`/costs?companyId=${companyId}`, token),
+  activity: (token: string, companyId: string) => apiRequest<ActivityEvent[]>(`/activity?companyId=${companyId}`, token),
   plugins: (token: string, companyId: string) => apiRequest<Plugin[]>(`/plugins?companyId=${companyId}`, token),
   routines: (token: string, companyId: string) => apiRequest<Routine[]>(`/routines?companyId=${companyId}`, token),
 };

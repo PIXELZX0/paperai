@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -31,16 +32,129 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        id: install
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm install --frozen-lockfile 2>&1 | tee "$RUNNER_TEMP/install.log"
 
       - name: Lint
-        run: pnpm lint
+        id: lint
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm lint 2>&1 | tee "$RUNNER_TEMP/lint.log"
 
       - name: Typecheck
-        run: pnpm typecheck
+        id: typecheck
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm typecheck 2>&1 | tee "$RUNNER_TEMP/typecheck.log"
 
       - name: Test
-        run: pnpm test
+        id: test
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm test 2>&1 | tee "$RUNNER_TEMP/test.log"
 
       - name: Build
-        run: pnpm build
+        id: build
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm build 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Prepare failure issue
+        id: failure_issue
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && (steps.install.outcome == 'failure' || steps.lint.outcome == 'failure' || steps.typecheck.outcome == 'failure' || steps.test.outcome == 'failure' || steps.build.outcome == 'failure')
+        shell: bash
+        env:
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          issue_file="$RUNNER_TEMP/ci-failure-issue.md"
+          short_sha="${GITHUB_SHA::7}"
+          failures=()
+
+          append_log() {
+            local title="$1"
+            local file="$2"
+
+            if [[ -f "$file" ]]; then
+              {
+                echo
+                echo "### ${title}"
+                echo
+                echo '```text'
+                tail -n 120 "$file"
+                echo '```'
+              } >> "$issue_file"
+            fi
+          }
+
+          [[ "${{ steps.install.outcome }}" == "failure" ]] && failures+=("Install dependencies")
+          [[ "${{ steps.lint.outcome }}" == "failure" ]] && failures+=("Lint")
+          [[ "${{ steps.typecheck.outcome }}" == "failure" ]] && failures+=("Typecheck")
+          [[ "${{ steps.test.outcome }}" == "failure" ]] && failures+=("Test")
+          [[ "${{ steps.build.outcome }}" == "failure" ]] && failures+=("Build")
+
+          {
+            echo "## CI workflow failed"
+            echo
+            echo "- Workflow: ${GITHUB_WORKFLOW}"
+            echo "- Job: validate"
+            echo "- Event: ${GITHUB_EVENT_NAME}"
+            echo "- Ref: ${GITHUB_REF}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Actor: ${GITHUB_ACTOR}"
+            echo "- Run: ${RUN_URL}"
+            echo
+            echo "## Failed steps"
+            for failure in "${failures[@]}"; do
+              echo "- ${failure}"
+            done
+          } > "$issue_file"
+
+          [[ "${{ steps.install.outcome }}" == "failure" ]] && append_log "Install dependencies log" "$RUNNER_TEMP/install.log"
+          [[ "${{ steps.lint.outcome }}" == "failure" ]] && append_log "Lint log" "$RUNNER_TEMP/lint.log"
+          [[ "${{ steps.typecheck.outcome }}" == "failure" ]] && append_log "Typecheck log" "$RUNNER_TEMP/typecheck.log"
+          [[ "${{ steps.test.outcome }}" == "failure" ]] && append_log "Test log" "$RUNNER_TEMP/test.log"
+          [[ "${{ steps.build.outcome }}" == "failure" ]] && append_log "Build log" "$RUNNER_TEMP/build.log"
+
+          echo "issue_file=$issue_file" >> "$GITHUB_OUTPUT"
+          echo "issue_title=[CI Failure] ${GITHUB_REF_NAME} @ ${short_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Create failure issue
+        if: always() && steps.failure_issue.outputs.issue_file != ''
+        uses: actions/github-script@v7
+        env:
+          ISSUE_FILE: ${{ steps.failure_issue.outputs.issue_file }}
+          ISSUE_TITLE: ${{ steps.failure_issue.outputs.issue_title }}
+        with:
+          script: |
+            const fs = require("fs");
+            const body = fs.readFileSync(process.env.ISSUE_FILE, "utf8");
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: process.env.ISSUE_TITLE,
+              body,
+            });
+
+      - name: Fail job when validation failed
+        if: always() && (steps.install.outcome == 'failure' || steps.lint.outcome == 'failure' || steps.typecheck.outcome == 'failure' || steps.test.outcome == 'failure' || steps.build.outcome == 'failure')
+        shell: bash
+        run: exit 1

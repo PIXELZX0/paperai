@@ -82,6 +82,7 @@ export type BudgetScope = (typeof BUDGET_SCOPES)[number];
 
 export const ACTIVITY_KINDS = [
   "company.created",
+  "company.updated",
   "membership.created",
   "invite.created",
   "goal.created",

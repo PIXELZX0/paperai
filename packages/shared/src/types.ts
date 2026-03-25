@@ -56,6 +56,10 @@ export interface Membership {
   createdAt: string;
 }
 
+export interface CompanyMember extends Membership {
+  user: Pick<AuthUser, "id" | "email" | "name">;
+}
+
 export interface Invite {
   id: string;
   companyId: string;

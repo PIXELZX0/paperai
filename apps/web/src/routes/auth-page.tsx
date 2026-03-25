@@ -1,22 +1,32 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, saveSession } from "../lib/api.js";
 
 export function AuthPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteToken, setInviteToken] = useState(() => searchParams.get("invite") ?? searchParams.get("inviteToken") ?? "");
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = searchParams.get("invite") ?? searchParams.get("inviteToken") ?? "";
+    if (token) {
+      setInviteToken(token);
+      setMode("register");
+    }
+  }, [searchParams]);
 
   async function submit() {
     setError(null);
     const result =
       mode === "login"
         ? await api.login(email, password)
-        : await api.register(name, email, password);
-    saveSession({ token: result.token, user: result.user });
+        : await api.register(name, email, password, inviteToken);
+    saveSession({ token: result.token, user: result.user, selectedCompanyId: null });
     navigate("/app");
   }
 
@@ -51,10 +61,21 @@ export function AuthPage() {
           </div>
           <div className="grid gap-4">
             {mode === "register" ? (
-              <label className="grid gap-1 text-sm text-zinc-300">
-                <span>Name</span>
-                <input className="rounded-2xl border border-white/10 bg-zinc-950 px-3 py-2" value={name} onChange={(event) => setName(event.target.value)} />
-              </label>
+              <>
+                <label className="grid gap-1 text-sm text-zinc-300">
+                  <span>Name</span>
+                  <input className="rounded-2xl border border-white/10 bg-zinc-950 px-3 py-2" value={name} onChange={(event) => setName(event.target.value)} />
+                </label>
+                <label className="grid gap-1 text-sm text-zinc-300">
+                  <span>Invite token (optional)</span>
+                  <input
+                    className="rounded-2xl border border-white/10 bg-zinc-950 px-3 py-2"
+                    value={inviteToken}
+                    placeholder="Paste an invite token to join a company"
+                    onChange={(event) => setInviteToken(event.target.value)}
+                  />
+                </label>
+              </>
             ) : null}
             <label className="grid gap-1 text-sm text-zinc-300">
               <span>Email</span>

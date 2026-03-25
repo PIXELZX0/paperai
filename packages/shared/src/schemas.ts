@@ -3,6 +3,7 @@ import {
   AGENT_ADAPTER_TYPES,
   APPROVAL_KINDS,
   APPROVAL_STATUSES,
+  COMPANY_STATUSES,
   GOAL_LEVELS,
   GOAL_STATUSES,
   ISSUE_PRIORITIES,
@@ -31,6 +32,15 @@ export const createCompanySchema = z.object({
   description: z.string().optional(),
   brandColor: z.string().optional(),
   monthlyBudgetCents: z.number().int().nonnegative().default(0),
+});
+
+export const updateCompanySchema = z.object({
+  slug: z.string().min(2).regex(/^[a-z0-9-]+$/).optional(),
+  name: z.string().min(2).optional(),
+  description: z.string().optional().nullable(),
+  status: z.enum(COMPANY_STATUSES).optional(),
+  brandColor: z.string().optional().nullable(),
+  monthlyBudgetCents: z.number().int().nonnegative().optional(),
 });
 
 export const createInviteSchema = z.object({

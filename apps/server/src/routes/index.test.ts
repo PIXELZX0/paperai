@@ -17,6 +17,8 @@ function createPlatformServiceStub() {
     getAgentForActor: vi.fn(),
     getTaskForActor: vi.fn(),
     getIssueForActor: vi.fn(),
+    updateCompany: vi.fn(),
+    listCompanyMembers: vi.fn(),
   } as unknown as PlatformService;
 }
 
@@ -158,6 +160,108 @@ describe("resource read routes", () => {
     expect(response.statusCode).toBe(401);
     expect(response.json()).toMatchObject({ error: "unauthorized" });
     expect(vi.mocked(platformService.getAgentForActor)).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("updates a company through PATCH /api/v1/companies/:companyId", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const updateCompany = vi.spyOn(platformService, "updateCompany").mockResolvedValue({
+      id: "company-1",
+      slug: "paperai-labs",
+      name: "PaperAI Labs",
+      description: "Updated description",
+      status: "active",
+      brandColor: "#06b6d4",
+      monthlyBudgetCents: 250000,
+      spentMonthlyCents: 0,
+      packageSource: null,
+      createdAt: "2026-03-25T00:00:00.000Z",
+      updatedAt: "2026-03-25T00:00:00.000Z",
+    });
+
+    const app = await createApp({
+      config: {
+        port: 3001,
+        databaseUrl: "postgres://unused",
+        jwtSecret: "test-secret",
+        webOrigin: "http://localhost:5173",
+      },
+      platformService,
+      runtime,
+    });
+
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/api/v1/companies/company-1",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+      payload: {
+        name: "PaperAI Labs",
+        description: "Updated description",
+        monthlyBudgetCents: 250000,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ id: "company-1", name: "PaperAI Labs" });
+    expect(updateCompany).toHaveBeenCalledWith("user-1", "company-1", {
+      name: "PaperAI Labs",
+      description: "Updated description",
+      monthlyBudgetCents: 250000,
+    });
+    await app.close();
+  });
+
+  it("lists company members through GET /api/v1/companies/:companyId/members", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const listCompanyMembers = vi.spyOn(platformService, "listCompanyMembers").mockResolvedValue([
+      {
+        id: "membership-1",
+        companyId: "company-1",
+        userId: "user-1",
+        role: "owner",
+        createdAt: "2026-03-25T00:00:00.000Z",
+        user: {
+          id: "user-1",
+          email: "owner@example.com",
+          name: "Owner",
+        },
+      },
+    ]);
+
+    const app = await createApp({
+      config: {
+        port: 3001,
+        databaseUrl: "postgres://unused",
+        jwtSecret: "test-secret",
+        webOrigin: "http://localhost:5173",
+      },
+      platformService,
+      runtime,
+    });
+
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/companies/company-1/members",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject([
+      {
+        companyId: "company-1",
+        role: "owner",
+        user: { email: "owner@example.com" },
+      },
+    ]);
+    expect(listCompanyMembers).toHaveBeenCalledWith("user-1", "company-1");
     await app.close();
   });
 });

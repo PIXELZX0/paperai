@@ -76,3 +76,20 @@ docker run --rm -p 3001:3001 --env-file .env paperai
 ```
 
 The container serves the Fastify API and the built web console together. In production, the web app defaults to same-origin API calls, so no extra `VITE_API_BASE_URL` is required unless you want to point the UI at a separate API host.
+
+The production image now bundles a headless Chromium runtime for agents. Inside the container, agents can use:
+
+```bash
+paperai-browser --version
+paperai-browser --virtual-time-budget=5000 --screenshot=/tmp/page.png https://example.com
+```
+
+Related environment variables are preconfigured:
+
+- `PAPERAI_HEADLESS_BROWSER_BIN`
+- `PAPERAI_HEADLESS_BROWSER_WRAPPER`
+- `PUPPETEER_EXECUTABLE_PATH`
+- `CHROME_BIN`
+- `CHROMIUM_BIN`
+
+A reusable agent skill lives at `skills/headless-browser/SKILL.md`.

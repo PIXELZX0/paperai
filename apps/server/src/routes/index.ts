@@ -18,6 +18,7 @@ import {
   loginSchema,
   registerSchema,
   resolveApprovalSchema,
+  updateCompanySchema,
   updateGoalSchema,
   updateIssueSchema,
   updateProjectSchema,
@@ -61,9 +62,21 @@ export const routes: FastifyPluginAsync = async (app) => {
     return await app.platformService.createCompany(request.user.sub, payload);
   });
 
+  app.patch("/api/v1/companies/:companyId", { preHandler: app.authenticate }, async (request) => {
+    const payload = updateCompanySchema.parse(request.body);
+    return await app.platformService.updateCompany(request.user.sub, (request.params as { companyId: string }).companyId, payload);
+  });
+
   app.get("/api/v1/memberships", { preHandler: app.authenticate }, async (request) => {
     const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
-    return await app.platformService.listMemberships(companyId);
+    return await app.platformService.listMemberships(request.user.sub, companyId);
+  });
+
+  app.get("/api/v1/companies/:companyId/members", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.listCompanyMembers(
+      request.user.sub,
+      (request.params as { companyId: string }).companyId,
+    );
   });
 
   app.get("/api/v1/companies/:companyId/invites", { preHandler: app.authenticate }, async (request) => {

@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   docker:
@@ -26,20 +27,23 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Expose GitHub runtime for Buildx cache
+        uses: crazy-max/ghaction-github-runtime@v3
+
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        id: login
+        continue-on-error: true
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          echo "${DOCKERHUB_TOKEN}" | docker login --username "${DOCKERHUB_USERNAME}" --password-stdin 2>&1 | tee "$RUNNER_TEMP/docker-login.log"
 
-      - name: Extract Docker labels
+      - name: Compute Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ steps.image.outputs.name }}
-
-      - name: Compute Docker tags
-        id: tags
+        continue-on-error: true
         shell: bash
         env:
           IMAGE_NAME: ${{ steps.image.outputs.name }}
@@ -47,6 +51,9 @@ jobs:
           TZ: Asia/Seoul
         run: |
           set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/docker-meta.log") 2>&1
+
+          created_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
           if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
             if [[ -z "${RELEASE_TAG}" ]]; then
@@ -54,33 +61,152 @@ jobs:
               exit 1
             fi
 
-            {
-              echo "tags<<EOF"
-              echo "${IMAGE_NAME}:latest"
-              echo "${IMAGE_NAME}:${RELEASE_TAG}"
-              echo "EOF"
-            } >> "$GITHUB_OUTPUT"
+            version="${RELEASE_TAG}"
+            tags=(
+              "${IMAGE_NAME}:latest"
+              "${IMAGE_NAME}:${RELEASE_TAG}"
+            )
           elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
             timestamp="$(date +'%Y-%m-%d-%H-%M-%S')"
-
-            {
-              echo "tags<<EOF"
-              echo "${IMAGE_NAME}:test-latest"
-              echo "${IMAGE_NAME}:test-${timestamp}"
-              echo "EOF"
-            } >> "$GITHUB_OUTPUT"
+            version="test-${timestamp}"
+            tags=(
+              "${IMAGE_NAME}:test-latest"
+              "${IMAGE_NAME}:test-${timestamp}"
+            )
           else
             echo "Unsupported event: ${GITHUB_EVENT_NAME} (${GITHUB_REF})" >&2
             exit 1
           fi
 
+          labels=(
+            "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            "org.opencontainers.image.revision=${GITHUB_SHA}"
+            "org.opencontainers.image.created=${created_at}"
+            "org.opencontainers.image.version=${version}"
+          )
+
+          {
+            echo "tags<<EOF"
+            printf '%s\n' "${tags[@]}"
+            echo "EOF"
+            echo "labels<<EOF"
+            printf '%s\n' "${labels[@]}"
+            echo "EOF"
+            echo "version=${version}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        id: build
+        if: steps.login.outcome == 'success' && steps.meta.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          DOCKER_TAGS: ${{ steps.meta.outputs.tags }}
+          DOCKER_LABELS: ${{ steps.meta.outputs.labels }}
+        run: |
+          set -euo pipefail
+
+          tag_args=()
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] && tag_args+=(--tag "$tag")
+          done <<< "$DOCKER_TAGS"
+
+          label_args=()
+          while IFS= read -r label; do
+            [[ -n "$label" ]] && label_args+=(--label "$label")
+          done <<< "$DOCKER_LABELS"
+
+          set -o pipefail
+          docker buildx build \
+            --file ./Dockerfile \
+            --push \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            "${tag_args[@]}" \
+            "${label_args[@]}" \
+            . 2>&1 | tee "$RUNNER_TEMP/docker-build.log"
+
+      - name: Prepare failure issue
+        id: failure_issue
+        if: always() && (steps.login.outcome == 'failure' || steps.meta.outcome == 'failure' || steps.build.outcome == 'failure')
+        shell: bash
+        env:
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          issue_file="$RUNNER_TEMP/docker-failure-issue.md"
+          short_sha="${GITHUB_SHA::7}"
+          failures=()
+
+          append_log() {
+            local title="$1"
+            local file="$2"
+
+            if [[ -f "$file" ]]; then
+              {
+                echo
+                echo "### ${title}"
+                echo
+                echo '```text'
+                tail -n 120 "$file"
+                echo '```'
+              } >> "$issue_file"
+            fi
+          }
+
+          [[ "${{ steps.login.outcome }}" == "failure" ]] && failures+=("Docker Hub login")
+          [[ "${{ steps.meta.outcome }}" == "failure" ]] && failures+=("Compute Docker metadata")
+          [[ "${{ steps.build.outcome }}" == "failure" ]] && failures+=("Build and push Docker image")
+
+          {
+            echo "## Docker workflow failed"
+            echo
+            echo "- Workflow: ${GITHUB_WORKFLOW}"
+            echo "- Job: docker"
+            echo "- Event: ${GITHUB_EVENT_NAME}"
+            echo "- Ref: ${GITHUB_REF}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Actor: ${GITHUB_ACTOR}"
+            echo "- Image: ${{ steps.image.outputs.name }}"
+            echo "- Tags:"
+            while IFS= read -r tag; do
+              [[ -n "$tag" ]] && echo "  - ${tag}"
+            done <<< "${{ steps.meta.outputs.tags }}"
+            echo "- Run: ${RUN_URL}"
+            echo
+            echo "## Failed steps"
+            for failure in "${failures[@]}"; do
+              echo "- ${failure}"
+            done
+          } > "$issue_file"
+
+          [[ "${{ steps.login.outcome }}" == "failure" ]] && append_log "Docker login log" "$RUNNER_TEMP/docker-login.log"
+          [[ "${{ steps.meta.outcome }}" == "failure" ]] && append_log "Docker metadata log" "$RUNNER_TEMP/docker-meta.log"
+          [[ "${{ steps.build.outcome }}" == "failure" ]] && append_log "Docker build log" "$RUNNER_TEMP/docker-build.log"
+
+          echo "issue_file=$issue_file" >> "$GITHUB_OUTPUT"
+          echo "issue_title=[Docker Failure] ${GITHUB_REF_NAME} @ ${short_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Create failure issue
+        if: always() && steps.failure_issue.outputs.issue_file != ''
+        uses: actions/github-script@v7
+        env:
+          ISSUE_FILE: ${{ steps.failure_issue.outputs.issue_file }}
+          ISSUE_TITLE: ${{ steps.failure_issue.outputs.issue_title }}
         with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          script: |
+            const fs = require("fs");
+            const body = fs.readFileSync(process.env.ISSUE_FILE, "utf8");
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: process.env.ISSUE_TITLE,
+              body,
+            });
+
+      - name: Fail job when Docker workflow failed
+        if: always() && (steps.login.outcome == 'failure' || steps.meta.outcome == 'failure' || steps.build.outcome == 'failure')
+        shell: bash
+        run: exit 1

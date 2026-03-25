@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export function InlineForm(props: {
   fields: Array<{
@@ -12,10 +12,16 @@ export function InlineForm(props: {
   }>;
   submitLabel: string;
   disabled?: boolean;
+  initialValues?: Record<string, string>;
   onSubmit(values: Record<string, string>): Promise<void>;
 }) {
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, string>>(props.initialValues ?? {});
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setValues(props.initialValues ?? {});
+  }, [props.initialValues]);
 
   return (
     <form
@@ -25,10 +31,13 @@ export function InlineForm(props: {
         if (props.disabled) {
           return;
         }
+        setError(null);
         setBusy(true);
         try {
           await props.onSubmit(values);
-          setValues({});
+          setValues(props.initialValues ?? {});
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Request failed");
         } finally {
           setBusy(false);
         }
@@ -84,6 +93,7 @@ export function InlineForm(props: {
       >
         {busy ? "Working..." : props.submitLabel}
       </button>
+      {error ? <p className="text-sm text-rose-300">{error}</p> : null}
     </form>
   );
 }
