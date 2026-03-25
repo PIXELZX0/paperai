@@ -1,142 +1,99 @@
 #!/usr/bin/env node
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { Command } from "commander";
-import { parseCompanyPackage } from "@paperai/company-package";
-import { validatePluginManifest } from "@paperai/plugin-sdk";
+import { Command, CommanderError } from "commander";
+import { createCommandContext } from "./lib/context.js";
+import { printError } from "./lib/output.js";
+import { resolveCliRuntime, type CliRuntimeInput } from "./lib/runtime.js";
+import { registerAgentCommands } from "./commands/agent.js";
+import { registerApprovalCommands } from "./commands/approval.js";
+import { registerAuthCommands } from "./commands/auth.js";
+import { registerCompanyCommands } from "./commands/company.js";
+import { registerIssueCommands } from "./commands/issue.js";
+import { registerLegacyCommands } from "./commands/legacy.js";
+import { registerPackageCommands } from "./commands/package.js";
+import { registerPluginCommands } from "./commands/plugin.js";
+import { registerTaskCommands } from "./commands/task.js";
 
-const program = new Command();
-const apiBase = process.env.PAPERAI_API_URL ?? "http://localhost:3001/api/v1";
-const token = process.env.PAPERAI_TOKEN ?? "";
-
-async function request(pathname: string, init?: RequestInit) {
-  const response = await fetch(`${apiBase}${pathname}`, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {}),
-    },
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `request_failed:${response.status}`);
+function resolveInvocationName(explicitName?: string) {
+  if (explicitName) {
+    return explicitName;
   }
 
-  return await response.json();
+  const executed = process.argv[1] ? path.basename(process.argv[1]) : "";
+  return executed === "paperai" ? "paperai" : "papercli";
 }
 
-program.name("paperai").description("CLI for the PaperAI zero-human company control plane");
+export function buildProgram(input: CliRuntimeInput = {}) {
+  const runtime = resolveCliRuntime({
+    ...input,
+    invocationName: resolveInvocationName(input.invocationName),
+  });
+  const context = createCommandContext(runtime);
+  const program = new Command();
 
-program
-  .command("init")
-  .description("Create a minimal company package scaffold")
-  .argument("[dir]", "directory to initialize", "paperai-company")
-  .action(async (dir) => {
-    await mkdir(path.join(dir, "agents", "ceo"), { recursive: true });
-    await writeFile(
-      path.join(dir, "COMPANY.md"),
-      `---\nschema: agentcompanies/v1\nkind: company\nslug: paperai-company\nname: PaperAI Company\ndescription: General autonomous company\n---\n\nRun a general-purpose zero-human company.\n`,
-    );
-    await writeFile(
-      path.join(dir, "agents", "ceo", "AGENTS.md"),
-      `---\nkind: agent\nslug: ceo\nname: CEO\ntitle: Chief Executive Officer\n---\n\nOwn company strategy, identity, and governance. Define the company's positioning, tone of voice, and visual direction before delegating downstream work. Create and maintain the canonical \`design_guide.md\` so product, marketing, and internal tools follow one consistent design system and brand standard. Coordinate strategy, goals, and approvals.\n`,
-    );
-    await writeFile(
-      path.join(dir, ".zero.yaml"),
-      `adapters:\n  ceo:\n    type: http_api\n    adapterConfig: {}\n`,
-    );
-    console.log(`Initialized ${dir}`);
+  program
+    .name(runtime.invocationName)
+    .description("Agent-first CLI for the PaperAI control plane")
+    .showHelpAfterError()
+    .showSuggestionAfterError()
+    .configureOutput({
+      writeOut: (value) => {
+        runtime.stdout.write(value);
+      },
+      writeErr: (value) => {
+        runtime.stderr.write(value);
+      },
+    })
+    .exitOverride();
+
+  registerAuthCommands(program, context);
+  registerCompanyCommands(program, context);
+  registerAgentCommands(program, context);
+  registerTaskCommands(program, context);
+  registerIssueCommands(program, context);
+  registerApprovalCommands(program, context);
+  registerPackageCommands(program, context);
+  registerPluginCommands(program, context);
+  registerLegacyCommands(program, context);
+
+  return program;
+}
+
+export async function runCli(argv = process.argv.slice(2), input: CliRuntimeInput = {}) {
+  const runtime = resolveCliRuntime({
+    ...input,
+    invocationName: resolveInvocationName(input.invocationName),
+  });
+  const program = buildProgram(runtime);
+
+  try {
+    await program.parseAsync(argv, { from: "user" });
+    return 0;
+  } catch (error) {
+    if (error instanceof CommanderError) {
+      if (error.code === "commander.helpDisplayed" || error.code === "commander.version") {
+        return 0;
+      }
+      return error.exitCode;
+    }
+
+    return printError(runtime, error);
+  }
+}
+
+async function main() {
+  const exitCode = await runCli(process.argv.slice(2), {
+    invocationName: resolveInvocationName(),
   });
 
-program
-  .command("dev")
-  .description("Check API health")
-  .action(async () => {
-    const data = await fetch(apiBase.replace("/api/v1", "/health")).then((response) => response.json());
-    console.log(JSON.stringify(data, null, 2));
-  });
+  if (exitCode !== 0) {
+    process.exitCode = exitCode;
+  }
+}
 
-program
-  .command("migrate")
-  .description("Remind the operator to run db push from the workspace")
-  .action(() => {
-    console.log("Run `pnpm db:push` from the repo root to sync the database schema.");
-  });
+const invokedScript = process.argv[1] ? path.basename(process.argv[1]) : "";
+const isMainModule = invokedScript === "papercli" || invokedScript === "paperai" || invokedScript.startsWith("index.");
 
-program
-  .command("import-company")
-  .requiredOption("--company <companyId>", "company id")
-  .requiredOption("--root <root>", "package directory")
-  .action(async (options) => {
-    const result = await request(`/packages/import?companyId=${options.company}`, {
-      method: "POST",
-      body: JSON.stringify({ root: options.root }),
-    });
-    console.log(JSON.stringify(result, null, 2));
-  });
-
-program
-  .command("export-company")
-  .requiredOption("--company <companyId>", "company id")
-  .action(async (options) => {
-    const result = await request(`/packages/export?companyId=${options.company}`);
-    console.log(JSON.stringify(result, null, 2));
-  });
-
-program
-  .command("agent:test")
-  .argument("<agentId>", "agent id")
-  .action(async (agentId) => {
-    const result = await request(`/agents/${agentId}/test`, { method: "POST" });
-    console.log(JSON.stringify(result, null, 2));
-  });
-
-program
-  .command("agent:wake")
-  .argument("<agentId>", "agent id")
-  .action(async (agentId) => {
-    const result = await request(`/agents/${agentId}/wake`, { method: "POST" });
-    console.log(JSON.stringify(result, null, 2));
-  });
-
-program
-  .command("task:create")
-  .requiredOption("--company <companyId>", "company id")
-  .requiredOption("--title <title>", "task title")
-  .option("--description <description>", "task description")
-  .option("--assignee <agentId>", "assignee agent id")
-  .action(async (options) => {
-    const result = await request(`/tasks?companyId=${options.company}`, {
-      method: "POST",
-      body: JSON.stringify({
-        title: options.title,
-        description: options.description,
-        assigneeAgentId: options.assignee ?? null,
-        status: "todo",
-        priority: "medium",
-        originKind: "manual",
-      }),
-    });
-    console.log(JSON.stringify(result, null, 2));
-  });
-
-program
-  .command("plugin:validate")
-  .requiredOption("--manifest <json>", "plugin manifest JSON")
-  .action(async (options) => {
-    const manifest = JSON.parse(options.manifest) as Record<string, unknown>;
-    const result = validatePluginManifest(manifest);
-    console.log(JSON.stringify(result, null, 2));
-  });
-
-program
-  .command("package:inspect")
-  .argument("<root>", "package directory")
-  .action(async (root) => {
-    const manifest = await parseCompanyPackage(root);
-    console.log(JSON.stringify(manifest, null, 2));
-  });
-
-void program.parseAsync();
+if (isMainModule) {
+  void main();
+}

@@ -17,6 +17,8 @@ import type {
   CostEvent,
   Goal,
   HeartbeatRun,
+  Issue,
+  IssueComment,
   Invite,
   Membership,
   MembershipRole,
@@ -87,6 +89,9 @@ function mapGoal(row: typeof schema.goals.$inferSelect): Goal {
     companyId: row.companyId,
     title: row.title,
     description: row.description,
+    level: row.level as Goal["level"],
+    status: row.status as Goal["status"],
+    parentId: row.parentId,
     ownerAgentId: row.ownerAgentId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -101,7 +106,33 @@ function mapProject(row: typeof schema.projects.$inferSelect): Project {
     slug: row.slug,
     name: row.name,
     description: row.description,
+    status: row.status as Project["status"],
+    targetDate: row.targetDate ?? null,
+    color: row.color,
+    archivedAt: toIso(row.archivedAt),
     ownerAgentId: row.ownerAgentId,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapIssue(row: typeof schema.tasks.$inferSelect): Issue {
+  return {
+    id: row.id,
+    companyId: row.companyId,
+    projectId: row.projectId,
+    goalId: row.goalId,
+    parentId: row.parentTaskId,
+    assigneeAgentId: row.assigneeAgentId,
+    createdByUserId: row.createdByUserId,
+    title: row.title,
+    description: row.description,
+    status: row.status as Issue["status"],
+    priority: row.priority as Issue["priority"],
+    checkoutHeartbeatRunId: row.checkoutHeartbeatRunId,
+    originKind: row.originKind,
+    originRef: row.originRef,
+    metadata: row.metadata,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -156,6 +187,18 @@ function mapTaskComment(row: typeof schema.taskComments.$inferSelect): TaskComme
   return {
     id: row.id,
     taskId: row.taskId,
+    companyId: row.companyId,
+    authorUserId: row.authorUserId,
+    authorAgentId: row.authorAgentId,
+    body: row.body,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapIssueComment(row: typeof schema.taskComments.$inferSelect): IssueComment {
+  return {
+    id: row.id,
+    issueId: row.taskId,
     companyId: row.companyId,
     authorUserId: row.authorUserId,
     authorAgentId: row.authorAgentId,
@@ -495,7 +538,18 @@ export class PlatformService {
     return rows.map(mapInvite);
   }
 
-  async createGoal(actorUserId: string, companyId: string, input: { title: string; description?: string; ownerAgentId?: string | null }) {
+  async createGoal(
+    actorUserId: string,
+    companyId: string,
+    input: {
+      title: string;
+      description?: string;
+      level: Goal["level"];
+      status: Goal["status"];
+      parentId?: string | null;
+      ownerAgentId?: string | null;
+    },
+  ) {
     await this.requirePermission(actorUserId, companyId, "goal:write");
     const [goal] = await this.db
       .insert(schema.goals)
@@ -503,6 +557,9 @@ export class PlatformService {
         companyId,
         title: input.title,
         description: input.description,
+        level: input.level,
+        status: input.status,
+        parentId: input.parentId ?? null,
         ownerAgentId: input.ownerAgentId ?? null,
         updatedAt: new Date(),
       })
@@ -520,14 +577,62 @@ export class PlatformService {
 
   async listGoals(actorUserId: string, companyId: string): Promise<Goal[]> {
     await this.requirePermission(actorUserId, companyId, "audit:read");
-    const rows = await this.db.select().from(schema.goals).where(eq(schema.goals.companyId, companyId));
+    const rows = await this.db
+      .select()
+      .from(schema.goals)
+      .where(eq(schema.goals.companyId, companyId))
+      .orderBy(asc(schema.goals.createdAt));
     return rows.map(mapGoal);
+  }
+
+  async updateGoal(
+    actorUserId: string,
+    goalId: string,
+    input: Partial<Omit<Goal, "id" | "companyId" | "createdAt" | "updatedAt">>,
+  ): Promise<Goal> {
+    const [existing] = await this.db.select().from(schema.goals).where(eq(schema.goals.id, goalId));
+    if (!existing) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, existing.companyId, "goal:write");
+    const [goal] = await this.db
+      .update(schema.goals)
+      .set({
+        title: input.title ?? existing.title,
+        description: input.description ?? existing.description,
+        level: input.level ?? (existing.level as Goal["level"]),
+        status: input.status ?? (existing.status as Goal["status"]),
+        parentId: input.parentId === undefined ? existing.parentId : input.parentId,
+        ownerAgentId: input.ownerAgentId === undefined ? existing.ownerAgentId : input.ownerAgentId,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.goals.id, goalId))
+      .returning();
+    await this.recordActivity({
+      companyId: existing.companyId,
+      actorUserId,
+      kind: "goal.updated",
+      targetType: "goal",
+      targetId: goal.id,
+      summary: `Updated goal ${goal.title}`,
+    });
+    return mapGoal(goal);
   }
 
   async createProject(
     actorUserId: string,
     companyId: string,
-    input: { slug: string; name: string; description?: string; goalId?: string | null; ownerAgentId?: string | null },
+    input: {
+      slug: string;
+      name: string;
+      description?: string;
+      goalId?: string | null;
+      status: Project["status"];
+      targetDate?: string | null;
+      color?: string | null;
+      archivedAt?: string | null;
+      ownerAgentId?: string | null;
+    },
   ) {
     await this.requirePermission(actorUserId, companyId, "project:write");
     const [project] = await this.db
@@ -538,6 +643,10 @@ export class PlatformService {
         name: input.name,
         description: input.description,
         goalId: input.goalId ?? null,
+        status: input.status,
+        targetDate: input.targetDate ?? null,
+        color: input.color ?? null,
+        archivedAt: input.archivedAt ? new Date(input.archivedAt) : null,
         ownerAgentId: input.ownerAgentId ?? null,
         updatedAt: new Date(),
       })
@@ -555,8 +664,236 @@ export class PlatformService {
 
   async listProjects(actorUserId: string, companyId: string): Promise<Project[]> {
     await this.requirePermission(actorUserId, companyId, "audit:read");
-    const rows = await this.db.select().from(schema.projects).where(eq(schema.projects.companyId, companyId));
+    const rows = await this.db
+      .select()
+      .from(schema.projects)
+      .where(eq(schema.projects.companyId, companyId))
+      .orderBy(asc(schema.projects.createdAt));
     return rows.map(mapProject);
+  }
+
+  async updateProject(
+    actorUserId: string,
+    projectId: string,
+    input: Partial<Omit<Project, "id" | "companyId" | "createdAt" | "updatedAt">>,
+  ): Promise<Project> {
+    const [existing] = await this.db.select().from(schema.projects).where(eq(schema.projects.id, projectId));
+    if (!existing) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, existing.companyId, "project:write");
+    const [project] = await this.db
+      .update(schema.projects)
+      .set({
+        goalId: input.goalId === undefined ? existing.goalId : input.goalId,
+        slug: input.slug ?? existing.slug,
+        name: input.name ?? existing.name,
+        description: input.description ?? existing.description,
+        status: input.status ?? (existing.status as Project["status"]),
+        targetDate: input.targetDate === undefined ? existing.targetDate : input.targetDate,
+        color: input.color === undefined ? existing.color : input.color,
+        archivedAt: input.archivedAt === undefined ? existing.archivedAt : input.archivedAt ? new Date(input.archivedAt) : null,
+        ownerAgentId: input.ownerAgentId === undefined ? existing.ownerAgentId : input.ownerAgentId,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.projects.id, projectId))
+      .returning();
+    await this.recordActivity({
+      companyId: existing.companyId,
+      actorUserId,
+      kind: "project.updated",
+      targetType: "project",
+      targetId: project.id,
+      summary: `Updated project ${project.name}`,
+    });
+    return mapProject(project);
+  }
+
+  async createIssue(
+    actorUserId: string,
+    companyId: string,
+    input: {
+      projectId?: string | null;
+      goalId?: string | null;
+      parentId?: string | null;
+      assigneeAgentId?: string | null;
+      title: string;
+      description?: string;
+      status: Issue["status"];
+      priority: Issue["priority"];
+      originKind: string;
+      originRef?: string | null;
+      metadata?: Record<string, unknown>;
+    },
+  ): Promise<Issue> {
+    await this.requirePermission(actorUserId, companyId, "issue:write");
+    const [issue] = await this.db
+      .insert(schema.tasks)
+      .values({
+        companyId,
+        projectId: input.projectId ?? null,
+        goalId: input.goalId ?? null,
+        parentTaskId: input.parentId ?? null,
+        assigneeAgentId: input.assigneeAgentId ?? null,
+        createdByUserId: actorUserId,
+        title: input.title,
+        description: input.description,
+        status: input.status,
+        priority: input.priority,
+        originKind: input.originKind,
+        originRef: input.originRef ?? null,
+        metadata: input.metadata ?? {},
+        updatedAt: new Date(),
+      })
+      .returning();
+    await this.recordActivity({
+      companyId,
+      actorUserId,
+      kind: "issue.created",
+      targetType: "issue",
+      targetId: issue.id,
+      summary: `Created issue ${issue.title}`,
+    });
+    return mapIssue(issue);
+  }
+
+  async listIssues(actorUserId: string, companyId: string): Promise<Issue[]> {
+    await this.requirePermission(actorUserId, companyId, "audit:read");
+    const rows = await this.db
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.companyId, companyId))
+      .orderBy(desc(schema.tasks.createdAt));
+    return rows.map(mapIssue);
+  }
+
+  async getIssue(issueId: string): Promise<Issue | null> {
+    const [row] = await this.db.select().from(schema.tasks).where(eq(schema.tasks.id, issueId));
+    return row ? mapIssue(row) : null;
+  }
+
+  async getIssueForActor(actorUserId: string, issueId: string): Promise<Issue> {
+    const issue = await this.getIssue(issueId);
+    if (!issue) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, issue.companyId, "audit:read");
+    return issue;
+  }
+
+  async updateIssue(
+    actorUserId: string,
+    issueId: string,
+    input: Partial<Omit<Issue, "id" | "companyId" | "createdAt" | "updatedAt">>,
+  ): Promise<Issue> {
+    const issue = await this.getIssue(issueId);
+    if (!issue) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, issue.companyId, "issue:write");
+    const [row] = await this.db
+      .update(schema.tasks)
+      .set({
+        projectId: input.projectId === undefined ? issue.projectId : input.projectId,
+        goalId: input.goalId === undefined ? issue.goalId : input.goalId,
+        parentTaskId: input.parentId === undefined ? issue.parentId : input.parentId,
+        assigneeAgentId: input.assigneeAgentId === undefined ? issue.assigneeAgentId : input.assigneeAgentId,
+        title: input.title ?? issue.title,
+        description: input.description ?? issue.description,
+        status: input.status ?? issue.status,
+        priority: input.priority ?? issue.priority,
+        originKind: input.originKind ?? issue.originKind,
+        originRef: input.originRef === undefined ? issue.originRef : input.originRef,
+        metadata: input.metadata ?? issue.metadata,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.tasks.id, issueId))
+      .returning();
+    await this.recordActivity({
+      companyId: issue.companyId,
+      actorUserId,
+      kind: "issue.updated",
+      targetType: "issue",
+      targetId: issueId,
+      summary: `Updated issue ${row.title}`,
+    });
+    return mapIssue(row);
+  }
+
+  async checkoutIssue(actorUserId: string, issueId: string, agentId: string, heartbeatRunId?: string) {
+    const issue = await this.getIssue(issueId);
+    if (!issue) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, issue.companyId, "issue:checkout");
+    const [row] = await this.db
+      .update(schema.tasks)
+      .set({
+        status: "in_progress",
+        assigneeAgentId: agentId,
+        checkoutHeartbeatRunId: heartbeatRunId ?? null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(schema.tasks.id, issueId),
+          inArray(schema.tasks.status, ["backlog", "todo", "blocked"]),
+        ),
+      )
+      .returning();
+    if (!row) {
+      throw new Error("issue_checkout_conflict");
+    }
+    await this.recordActivity({
+      companyId: issue.companyId,
+      actorUserId,
+      kind: "issue.checked_out",
+      targetType: "issue",
+      targetId: issueId,
+      summary: `Checked out issue ${row.title}`,
+      payload: { agentId, heartbeatRunId },
+    });
+    return mapIssue(row);
+  }
+
+  async addIssueComment(actorUserId: string, issueId: string, body: string) {
+    const issue = await this.getIssue(issueId);
+    if (!issue) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, issue.companyId, "issue:write");
+    const [row] = await this.db
+      .insert(schema.taskComments)
+      .values({
+        companyId: issue.companyId,
+        taskId: issueId,
+        authorUserId: actorUserId,
+        body,
+      })
+      .returning();
+    await this.recordActivity({
+      companyId: issue.companyId,
+      actorUserId,
+      kind: "issue.commented",
+      targetType: "issue_comment",
+      targetId: row.id,
+      summary: `Commented on issue ${issue.title}`,
+    });
+    return mapIssueComment(row);
+  }
+
+  async listIssueComments(actorUserId: string, issueId: string): Promise<IssueComment[]> {
+    const issue = await this.getIssue(issueId);
+    if (!issue) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, issue.companyId, "audit:read");
+    const rows = await this.db
+      .select()
+      .from(schema.taskComments)
+      .where(eq(schema.taskComments.taskId, issueId))
+      .orderBy(asc(schema.taskComments.createdAt));
+    return rows.map(mapIssueComment);
   }
 
   async createAgent(
@@ -617,6 +954,15 @@ export class PlatformService {
   async getAgent(agentId: string): Promise<Agent | null> {
     const [row] = await this.db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
     return row ? mapAgent(row) : null;
+  }
+
+  async getAgentForActor(actorUserId: string, agentId: string): Promise<Agent> {
+    const agent = await this.getAgent(agentId);
+    if (!agent) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, agent.companyId, "audit:read");
+    return agent;
   }
 
   async resetAgentSession(actorUserId: string, agentId: string): Promise<Agent> {
@@ -702,6 +1048,15 @@ export class PlatformService {
   async getTask(taskId: string): Promise<Task | null> {
     const [row] = await this.db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId));
     return row ? mapTask(row) : null;
+  }
+
+  async getTaskForActor(actorUserId: string, taskId: string): Promise<Task> {
+    const task = await this.getTask(taskId);
+    if (!task) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, task.companyId, "audit:read");
+    return task;
   }
 
   async updateTask(actorUserId: string, taskId: string, input: Partial<Omit<Task, "id" | "companyId" | "createdAt" | "updatedAt">>) {

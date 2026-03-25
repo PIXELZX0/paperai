@@ -53,6 +53,9 @@ importers:
       '@paperai/plugin-sdk':
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
+      '@paperai/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       commander:
         specifier: ^13.1.0
         version: 13.1.0

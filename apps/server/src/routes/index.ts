@@ -1,10 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
 import {
+  checkoutIssueSchema,
   checkoutTaskSchema,
   createAgentSchema,
   createApprovalSchema,
   createCompanySchema,
   createGoalSchema,
+  createIssueCommentSchema,
+  createIssueSchema,
   createInviteSchema,
   createPluginSchema,
   createProjectSchema,
@@ -15,6 +18,9 @@ import {
   loginSchema,
   registerSchema,
   resolveApprovalSchema,
+  updateGoalSchema,
+  updateIssueSchema,
+  updateProjectSchema,
   updateTaskSchema,
 } from "@paperai/shared";
 
@@ -80,6 +86,11 @@ export const routes: FastifyPluginAsync = async (app) => {
     return await app.platformService.createGoal(request.user.sub, parseCompanyId(query.companyId), payload);
   });
 
+  app.patch("/api/v1/goals/:goalId", { preHandler: app.authenticate }, async (request) => {
+    const payload = updateGoalSchema.parse(request.body);
+    return await app.platformService.updateGoal(request.user.sub, (request.params as { goalId: string }).goalId, payload);
+  });
+
   app.get("/api/v1/projects", { preHandler: app.authenticate }, async (request) => {
     const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
     return await app.platformService.listProjects(request.user.sub, companyId);
@@ -91,9 +102,69 @@ export const routes: FastifyPluginAsync = async (app) => {
     return await app.platformService.createProject(request.user.sub, parseCompanyId(query.companyId), payload);
   });
 
+  app.patch("/api/v1/projects/:projectId", { preHandler: app.authenticate }, async (request) => {
+    const payload = updateProjectSchema.parse(request.body);
+    return await app.platformService.updateProject(
+      request.user.sub,
+      (request.params as { projectId: string }).projectId,
+      payload,
+    );
+  });
+
+  app.get("/api/v1/issues", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listIssues(request.user.sub, companyId);
+  });
+
+  app.get("/api/v1/issues/:issueId", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.getIssueForActor(request.user.sub, (request.params as { issueId: string }).issueId);
+  });
+
+  app.post("/api/v1/issues", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    const payload = createIssueSchema.parse(request.body);
+    return await app.platformService.createIssue(request.user.sub, companyId, payload);
+  });
+
+  app.patch("/api/v1/issues/:issueId", { preHandler: app.authenticate }, async (request) => {
+    const payload = updateIssueSchema.parse(request.body);
+    return await app.platformService.updateIssue(
+      request.user.sub,
+      (request.params as { issueId: string }).issueId,
+      payload,
+    );
+  });
+
+  app.post("/api/v1/issues/:issueId/checkout", { preHandler: app.authenticate }, async (request) => {
+    const payload = checkoutIssueSchema.parse(request.body);
+    return await app.platformService.checkoutIssue(
+      request.user.sub,
+      (request.params as { issueId: string }).issueId,
+      payload.agentId,
+      payload.heartbeatRunId,
+    );
+  });
+
+  app.get("/api/v1/issues/:issueId/comments", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.listIssueComments(request.user.sub, (request.params as { issueId: string }).issueId);
+  });
+
+  app.post("/api/v1/issues/:issueId/comments", { preHandler: app.authenticate }, async (request) => {
+    const payload = createIssueCommentSchema.parse(request.body);
+    return await app.platformService.addIssueComment(
+      request.user.sub,
+      (request.params as { issueId: string }).issueId,
+      payload.body,
+    );
+  });
+
   app.get("/api/v1/agents", { preHandler: app.authenticate }, async (request) => {
     const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
     return await app.platformService.listAgents(request.user.sub, companyId);
+  });
+
+  app.get("/api/v1/agents/:agentId", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.getAgentForActor(request.user.sub, (request.params as { agentId: string }).agentId);
   });
 
   app.post("/api/v1/agents", { preHandler: app.authenticate }, async (request) => {
@@ -129,6 +200,10 @@ export const routes: FastifyPluginAsync = async (app) => {
   app.get("/api/v1/tasks", { preHandler: app.authenticate }, async (request) => {
     const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
     return await app.platformService.listTasks(request.user.sub, companyId);
+  });
+
+  app.get("/api/v1/tasks/:taskId", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.getTaskForActor(request.user.sub, (request.params as { taskId: string }).taskId);
   });
 
   app.post("/api/v1/tasks", { preHandler: app.authenticate }, async (request) => {

@@ -3,7 +3,10 @@ import type {
   ApprovalRequest,
   Company,
   CostEvent,
+  Goal,
   HeartbeatRun,
+  Issue,
+  IssueComment,
   Plugin,
   Project,
   Routine,
@@ -72,6 +75,30 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  goals: (token: string, companyId: string) => apiRequest<Goal[]>(`/goals?companyId=${companyId}`, token),
+  createGoal: (token: string, companyId: string, payload: Record<string, unknown>) =>
+    apiRequest<Goal>(`/goals?companyId=${companyId}`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  projects: (token: string, companyId: string) => apiRequest<Project[]>(`/projects?companyId=${companyId}`, token),
+  createProject: (token: string, companyId: string, payload: Record<string, unknown>) =>
+    apiRequest<Project>(`/projects?companyId=${companyId}`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  issues: (token: string, companyId: string) => apiRequest<Issue[]>(`/issues?companyId=${companyId}`, token),
+  createIssue: (token: string, companyId: string, payload: Record<string, unknown>) =>
+    apiRequest<Issue>(`/issues?companyId=${companyId}`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  issueComments: (token: string, issueId: string) => apiRequest<IssueComment[]>(`/issues/${issueId}/comments`, token),
+  addIssueComment: (token: string, issueId: string, body: string) =>
+    apiRequest<IssueComment>(`/issues/${issueId}/comments`, token, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
   agents: (token: string, companyId: string) => apiRequest<Agent[]>(`/agents?companyId=${companyId}`, token),
   createAgent: (token: string, companyId: string, payload: Record<string, unknown>) =>
     apiRequest<Agent>(`/agents?companyId=${companyId}`, token, {
@@ -92,7 +119,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ body }),
     }),
-  projects: (token: string, companyId: string) => apiRequest<Project[]>(`/projects?companyId=${companyId}`, token),
   approvals: (token: string, companyId: string) => apiRequest<ApprovalRequest[]>(`/approvals?companyId=${companyId}`, token),
   resolveApproval: (token: string, approvalId: string, status: "approved" | "rejected") =>
     apiRequest(`/approvals/${approvalId}/resolve`, token, {

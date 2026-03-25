@@ -16,12 +16,19 @@ function findWebDistDir() {
   return candidates.find((candidate) => existsSync(candidate));
 }
 
-export async function createApp() {
-  const config = getConfig();
+export interface CreateAppOptions {
+  config?: ReturnType<typeof getConfig>;
+  eventBus?: DomainEventBus;
+  platformService?: PlatformService;
+  runtime?: RuntimeOrchestrator;
+}
+
+export async function createApp(options: CreateAppOptions = {}) {
+  const config = options.config ?? getConfig();
   const app = Fastify({ logger: true });
-  const eventBus = new DomainEventBus();
-  const platformService = PlatformService.create(config.databaseUrl, eventBus);
-  const runtime = new RuntimeOrchestrator(platformService, eventBus, getAdapterRegistry());
+  const eventBus = options.eventBus ?? new DomainEventBus();
+  const platformService = options.platformService ?? PlatformService.create(config.databaseUrl, eventBus);
+  const runtime = options.runtime ?? new RuntimeOrchestrator(platformService, eventBus, getAdapterRegistry());
 
   await app.register(cors, {
     origin: config.webOrigin,

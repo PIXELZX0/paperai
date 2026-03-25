@@ -3,7 +3,12 @@ import {
   AGENT_ADAPTER_TYPES,
   APPROVAL_KINDS,
   APPROVAL_STATUSES,
+  GOAL_LEVELS,
+  GOAL_STATUSES,
+  ISSUE_PRIORITIES,
+  ISSUE_STATUSES,
   MEMBERSHIP_ROLES,
+  PROJECT_STATUSES,
   TASK_LIFECYCLE_STATUSES,
   TASK_PRIORITIES,
 } from "./constants.js";
@@ -36,16 +41,27 @@ export const createInviteSchema = z.object({
 export const createGoalSchema = z.object({
   title: z.string().min(2),
   description: z.string().optional(),
+  level: z.enum(GOAL_LEVELS).default("task"),
+  status: z.enum(GOAL_STATUSES).default("planned"),
+  parentId: z.string().uuid().optional().nullable(),
   ownerAgentId: z.string().uuid().optional().nullable(),
 });
+
+export const updateGoalSchema = createGoalSchema.partial();
 
 export const createProjectSchema = z.object({
   slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
   name: z.string().min(2),
   description: z.string().optional(),
   goalId: z.string().uuid().optional().nullable(),
+  status: z.enum(PROJECT_STATUSES).default("backlog"),
+  targetDate: z.string().optional().nullable(),
+  color: z.string().optional().nullable(),
   ownerAgentId: z.string().uuid().optional().nullable(),
+  archivedAt: z.string().datetime().optional().nullable(),
 });
+
+export const updateProjectSchema = createProjectSchema.partial();
 
 export const createAgentSchema = z.object({
   slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
@@ -79,11 +95,39 @@ export const updateTaskSchema = createTaskSchema.partial().extend({
   priority: z.enum(TASK_PRIORITIES).optional(),
 });
 
+export const createIssueSchema = z.object({
+  projectId: z.string().uuid().optional().nullable(),
+  goalId: z.string().uuid().optional().nullable(),
+  parentId: z.string().uuid().optional().nullable(),
+  assigneeAgentId: z.string().uuid().optional().nullable(),
+  title: z.string().min(2),
+  description: z.string().optional(),
+  status: z.enum(ISSUE_STATUSES).default("backlog"),
+  priority: z.enum(ISSUE_PRIORITIES).default("medium"),
+  originKind: z.string().default("manual"),
+  originRef: z.string().optional().nullable(),
+  metadata: z.record(z.unknown()).default({}),
+});
+
+export const updateIssueSchema = createIssueSchema.partial().extend({
+  status: z.enum(ISSUE_STATUSES).optional(),
+  priority: z.enum(ISSUE_PRIORITIES).optional(),
+});
+
 export const createTaskCommentSchema = z.object({
   body: z.string().min(1),
 });
 
+export const createIssueCommentSchema = z.object({
+  body: z.string().min(1),
+});
+
 export const checkoutTaskSchema = z.object({
+  agentId: z.string().uuid(),
+  heartbeatRunId: z.string().uuid().optional(),
+});
+
+export const checkoutIssueSchema = z.object({
   agentId: z.string().uuid(),
   heartbeatRunId: z.string().uuid().optional(),
 });

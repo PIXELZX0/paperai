@@ -7,10 +7,15 @@ import type {
   BoardPermission,
   BudgetScope,
   CompanyStatus,
+  GoalLevel,
+  GoalStatus,
   HeartbeatStatus,
   HeartbeatTriggerKind,
+  IssuePriority,
+  IssueStatus,
   MembershipRole,
   PluginStatus,
+  ProjectStatus,
   TaskLifecycleStatus,
   TaskPriority,
 } from "./constants.js";
@@ -68,6 +73,9 @@ export interface Goal {
   companyId: string;
   title: string;
   description: string | null;
+  level: GoalLevel;
+  status: GoalStatus;
+  parentId: string | null;
   ownerAgentId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -80,7 +88,31 @@ export interface Project {
   slug: string;
   name: string;
   description: string | null;
+  status: ProjectStatus;
+  targetDate: string | null;
+  color: string | null;
+  archivedAt: string | null;
   ownerAgentId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Issue {
+  id: string;
+  companyId: string;
+  projectId: string | null;
+  goalId: string | null;
+  parentId: string | null;
+  assigneeAgentId: string | null;
+  createdByUserId: string | null;
+  title: string;
+  description: string | null;
+  status: IssueStatus;
+  priority: IssuePriority;
+  checkoutHeartbeatRunId: string | null;
+  originKind: string;
+  originRef: string | null;
+  metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }
@@ -129,6 +161,16 @@ export interface Task {
 export interface TaskComment {
   id: string;
   taskId: string;
+  companyId: string;
+  authorUserId: string | null;
+  authorAgentId: string | null;
+  body: string;
+  createdAt: string;
+}
+
+export interface IssueComment {
+  id: string;
+  issueId: string;
   companyId: string;
   authorUserId: string | null;
   authorAgentId: string | null;

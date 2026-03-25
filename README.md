@@ -23,6 +23,38 @@ PaperAI is a self-hosted TypeScript control plane for zero-human companies.
 4. Run `pnpm db:push`
 5. Run `pnpm dev`
 
+## `papercli`
+
+PaperAI ships with an agent-first CLI for scripted and autonomous workflows.
+
+Build the CLI:
+
+```bash
+pnpm --filter paperai build
+```
+
+Common setup:
+
+```bash
+export PAPERAI_API_URL=http://localhost:3001/api/v1
+papercli auth login --email you@example.com --password 'password123'
+papercli company use <company-id>
+```
+
+Agent-oriented examples:
+
+```bash
+papercli task current
+papercli task comment --body "Started implementation"
+papercli task complete
+papercli issue block --issue <issue-id>
+papercli approval resolve <approval-id> --status approved
+```
+
+Configuration precedence is `flag > env > profile > default`. The CLI stores its local profile at
+`$XDG_CONFIG_HOME/papercli/config.json` or `~/.config/papercli/config.json`. The legacy `paperai`
+binary remains available as a compatibility alias for `papercli`.
+
 ## CI/CD
 
 - CI runs `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` on pushes and pull requests.

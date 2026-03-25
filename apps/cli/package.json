@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
+    "papercli": "./dist/index.cjs",
     "paperai": "./dist/index.cjs"
   },
   "scripts": {
@@ -13,6 +14,7 @@
   "dependencies": {
     "@paperai/company-package": "workspace:*",
     "@paperai/plugin-sdk": "workspace:*",
+    "@paperai/shared": "workspace:*",
     "commander": "^13.1.0"
   }
 }

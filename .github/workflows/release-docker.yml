@@ -1,8 +1,11 @@
-name: Release Docker Image
+name: Docker Image
 
 on:
   release:
     types: [published]
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -31,14 +34,47 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
+      - name: Extract Docker labels
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.image.outputs.name }}
-          tags: |
-            type=raw,value=${{ github.event.release.tag_name }}
-            type=raw,value=latest,enable=${{ github.event.release.prerelease == false }}
+
+      - name: Compute Docker tags
+        id: tags
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          TZ: Asia/Seoul
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
+            if [[ -z "${RELEASE_TAG}" ]]; then
+              echo "Release tag is missing." >&2
+              exit 1
+            fi
+
+            {
+              echo "tags<<EOF"
+              echo "${IMAGE_NAME}:latest"
+              echo "${IMAGE_NAME}:${RELEASE_TAG}"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            timestamp="$(date +'%Y-%m-%d-%H-%M-%S')"
+
+            {
+              echo "tags<<EOF"
+              echo "${IMAGE_NAME}:test-latest"
+              echo "${IMAGE_NAME}:test-${timestamp}"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "Unsupported event: ${GITHUB_EVENT_NAME} (${GITHUB_REF})" >&2
+            exit 1
+          fi
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -46,7 +82,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.tags.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
