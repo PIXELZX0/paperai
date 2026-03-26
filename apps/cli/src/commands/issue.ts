@@ -236,4 +236,185 @@ export function registerIssueCommands(program: Command, context: CommandContext)
         }),
     ),
   );
+
+  addIssueOption(
+    addApiOptions(
+      issue
+        .command("documents")
+        .description("List issue documents")
+        .argument("[issueId]", "issue id")
+        .action(async (issueId: string | undefined, options) => {
+          const client = await context.createApiClient({
+            apiUrl: options.apiUrl,
+            token: options.token,
+          });
+          const resolvedIssueId = context.resolveIssueId(issueId ?? options.issue);
+          printJson(context.runtime, await client.listIssueDocuments(resolvedIssueId!));
+        }),
+    ),
+  );
+
+  addIssueOption(
+    addBodyOptions(
+      addApiOptions(
+        issue
+          .command("document-create")
+          .description("Create an issue document")
+          .argument("[issueId]", "issue id")
+          .requiredOption("--key <key>", "document key")
+          .requiredOption("--title <title>", "document title")
+          .option("--format <format>", "document format", "markdown")
+          .action(async (issueId: string | undefined, options) => {
+            const client = await context.createApiClient({
+              apiUrl: options.apiUrl,
+              token: options.token,
+            });
+            const resolvedIssueId = context.resolveIssueId(issueId ?? options.issue);
+            const body = await readBodyInput(context.runtime, options, true);
+            printJson(
+              context.runtime,
+              await client.createIssueDocument(resolvedIssueId!, {
+                key: options.key,
+                title: options.title,
+                format: options.format === "text" ? "text" : "markdown",
+                body: body!,
+              }),
+            );
+          }),
+      ),
+    ),
+  );
+
+  addBodyOptions(
+    addApiOptions(
+      issue
+        .command("document-update")
+        .description("Update an issue document")
+        .argument("<documentId>", "document id")
+        .option("--title <title>", "document title")
+        .option("--format <format>", "document format")
+        .action(async (documentId: string, options) => {
+          const client = await context.createApiClient({
+            apiUrl: options.apiUrl,
+            token: options.token,
+          });
+          const body = await readBodyInput(context.runtime, options, false);
+          const payload: { title?: string; format?: "markdown" | "text"; body?: string } = {};
+          if (options.title !== undefined) {
+            payload.title = options.title;
+          }
+          if (options.format === "markdown" || options.format === "text") {
+            payload.format = options.format;
+          }
+          if (body !== undefined) {
+            payload.body = body;
+          }
+          requireIssueMutation(payload as Record<string, unknown>);
+          printJson(context.runtime, await client.updateIssueDocument(documentId, payload));
+        }),
+    ),
+  );
+
+  addApiOptions(
+    issue
+      .command("document-revisions")
+      .description("List revisions for an issue document")
+      .argument("<documentId>", "document id")
+      .action(async (documentId: string, options) => {
+        const client = await context.createApiClient({
+          apiUrl: options.apiUrl,
+          token: options.token,
+        });
+        printJson(context.runtime, await client.listIssueDocumentRevisions(documentId));
+      }),
+  );
+
+  addIssueOption(
+    addApiOptions(
+      issue
+        .command("attachments")
+        .description("List issue attachments")
+        .argument("[issueId]", "issue id")
+        .action(async (issueId: string | undefined, options) => {
+          const client = await context.createApiClient({
+            apiUrl: options.apiUrl,
+            token: options.token,
+          });
+          const resolvedIssueId = context.resolveIssueId(issueId ?? options.issue);
+          printJson(context.runtime, await client.listIssueAttachments(resolvedIssueId!));
+        }),
+    ),
+  );
+
+  addIssueOption(
+    addApiOptions(
+      issue
+        .command("attachment-create")
+        .description("Create an issue attachment record")
+        .argument("[issueId]", "issue id")
+        .requiredOption("--name <name>", "attachment name")
+        .requiredOption("--content-type <type>", "content type")
+        .requiredOption("--size-bytes <bytes>", "attachment size in bytes")
+        .option("--url <url>", "attachment URL")
+        .option("--metadata <json>", "metadata JSON object")
+        .action(async (issueId: string | undefined, options) => {
+          const client = await context.createApiClient({
+            apiUrl: options.apiUrl,
+            token: options.token,
+          });
+          const resolvedIssueId = context.resolveIssueId(issueId ?? options.issue);
+          printJson(
+            context.runtime,
+            await client.createIssueAttachment(resolvedIssueId!, {
+              name: options.name,
+              contentType: options.contentType,
+              sizeBytes: Number(options.sizeBytes),
+              url: options.url ?? null,
+              metadata: parseJsonObject(options.metadata, "metadata") ?? {},
+            }),
+          );
+        }),
+    ),
+  );
+
+  addIssueOption(
+    addApiOptions(
+      issue
+        .command("work-products")
+        .description("List issue work products")
+        .argument("[issueId]", "issue id")
+        .action(async (issueId: string | undefined, options) => {
+          const client = await context.createApiClient({
+            apiUrl: options.apiUrl,
+            token: options.token,
+          });
+          const resolvedIssueId = context.resolveIssueId(issueId ?? options.issue);
+          printJson(context.runtime, await client.listIssueWorkProducts(resolvedIssueId!));
+        }),
+    ),
+  );
+
+  addApiOptions(
+    issue
+      .command("work-product-create")
+      .description("Create an issue work product")
+      .argument("<issueId>", "issue id")
+      .requiredOption("--kind <kind>", "work product kind")
+      .requiredOption("--title <title>", "work product title")
+      .option("--content <json>", "content JSON object")
+      .action(async (issueId: string, options) => {
+        const client = await context.createApiClient({
+          apiUrl: options.apiUrl,
+          token: options.token,
+        });
+        printJson(
+          context.runtime,
+          await client.createIssueWorkProduct(issueId, {
+            kind: options.kind,
+            title: options.title,
+            content: parseJsonObject(options.content, "content") ?? {},
+          }),
+        );
+      }),
+  );
 }

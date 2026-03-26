@@ -185,6 +185,104 @@ export const importCompanyPackageSchema = z.object({
   root: z.string().min(1),
 });
 
+export const createProjectWorkspaceSchema = z.object({
+  name: z.string().min(1),
+  cwd: z.string().optional().nullable(),
+  repoUrl: z.string().optional().nullable(),
+  repoRef: z.string().optional().nullable(),
+  isPrimary: z.boolean().default(false),
+});
+
+export const createExecutionWorkspaceSchema = z.object({
+  projectId: z.string().uuid().optional().nullable(),
+  issueId: z.string().uuid().optional().nullable(),
+  name: z.string().min(1),
+  cwd: z.string().optional().nullable(),
+  repoUrl: z.string().optional().nullable(),
+  baseRef: z.string().optional().nullable(),
+  branchName: z.string().optional().nullable(),
+  mode: z.enum(["shared_workspace", "isolated_workspace", "adapter_managed"]).default("shared_workspace"),
+  status: z.enum(["active", "idle", "archived"]).default("active"),
+});
+
+export const createCompanySkillSchema = z.object({
+  slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
+  name: z.string().min(1),
+  description: z.string().optional().nullable(),
+  markdown: z.string().default(""),
+  sourceType: z.enum(["local_path", "github", "url"]).default("local_path"),
+  sourceLocator: z.string().optional().nullable(),
+});
+
+export const updateCompanySkillSchema = createCompanySkillSchema.partial();
+
+export const scanCompanySkillsSchema = z.object({
+  root: z.string().min(1),
+  upsert: z.boolean().default(true),
+});
+
+export const createSecretSchema = z.object({
+  name: z.string().min(1),
+  value: z.string().min(1),
+  valueHint: z.string().optional().nullable(),
+});
+
+export const updateSecretSchema = z.object({
+  value: z.string().min(1).optional(),
+  valueHint: z.string().optional().nullable(),
+});
+
+export const createIssueDocumentSchema = z.object({
+  key: z.string().min(1),
+  title: z.string().min(1),
+  format: z.enum(["markdown", "text"]).default("markdown"),
+  body: z.string().default(""),
+});
+
+export const updateIssueDocumentSchema = z.object({
+  title: z.string().min(1).optional(),
+  format: z.enum(["markdown", "text"]).optional(),
+  body: z.string().optional(),
+});
+
+export const createIssueAttachmentSchema = z.object({
+  name: z.string().min(1),
+  contentType: z.string().min(1),
+  sizeBytes: z.number().int().nonnegative().default(0),
+  url: z.string().optional().nullable(),
+  metadata: z.record(z.unknown()).default({}),
+});
+
+export const createIssueWorkProductSchema = z.object({
+  kind: z.string().min(1),
+  title: z.string().min(1),
+  content: z.record(z.unknown()).default({}),
+});
+
+export const updatePluginStatusSchema = z.object({
+  status: z.enum(["active", "disabled"]),
+});
+
+export const upgradePluginSchema = z.object({
+  manifest: pluginManifestSchema,
+  config: z.record(z.unknown()).default({}),
+});
+
+export const invokePluginToolSchema = z.object({
+  toolName: z.string().min(1),
+  input: z.record(z.unknown()).default({}),
+});
+
+export const triggerPluginJobSchema = z.object({
+  jobKey: z.string().min(1),
+  input: z.record(z.unknown()).default({}),
+});
+
+export const triggerPluginWebhookSchema = z.object({
+  webhookKey: z.string().min(1),
+  payload: z.record(z.unknown()).default({}),
+});
+
 export const paperAiDatabaseBackupConfigSchema = z.object({
   dir: z.string().min(1),
 });

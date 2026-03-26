@@ -17,6 +17,13 @@
 - `paperai doctor`
 - `paperai run`
 - `paperai db:backup`
+- `papercli company org`
+- `papercli company cost-overview`
+- `papercli workspace create-project`
+- `papercli workspace create-execution`
+- `papercli skill scan`
+- `papercli secret create`
+- `papercli plugin health`
 
 ## Embedded Postgres
 

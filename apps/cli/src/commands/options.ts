@@ -11,6 +11,10 @@ export function addCompanyOption(command: Command) {
   return command.option("--company <companyId>", "company id");
 }
 
+export function addProjectOption(command: Command) {
+  return command.option("--project <projectId>", "project id");
+}
+
 export function addAgentOption(command: Command, required = false) {
   return required
     ? command.requiredOption("--agent <agentId>", "agent id")

@@ -122,6 +122,19 @@ export const projects = pgTable("projects", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const projectWorkspaces = pgTable("project_workspaces", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  cwd: text("cwd"),
+  repoUrl: text("repo_url"),
+  repoRef: text("repo_ref"),
+  isPrimary: boolean("is_primary").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const agents = pgTable("agents", {
   id: uuid("id").primaryKey().defaultRandom(),
   companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
@@ -169,6 +182,89 @@ export const tasks = pgTable("tasks", {
   originKind: text("origin_kind").notNull().default("manual"),
   originRef: text("origin_ref"),
   metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const executionWorkspaces = pgTable("execution_workspaces", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+  projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
+  issueId: uuid("issue_id").references(() => tasks.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  cwd: text("cwd"),
+  repoUrl: text("repo_url"),
+  baseRef: text("base_ref"),
+  branchName: text("branch_name"),
+  mode: text("mode").notNull().default("shared_workspace"),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const companySkills = pgTable("company_skills", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+  slug: text("slug").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  markdown: text("markdown").notNull().default(""),
+  sourceType: text("source_type").notNull().default("local_path"),
+  sourceLocator: text("source_locator"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const secrets = pgTable("secrets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  provider: text("provider").notNull().default("local"),
+  value: text("value").notNull(),
+  valueHint: text("value_hint"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const issueDocuments = pgTable("issue_documents", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  issueId: uuid("issue_id").notNull().references(() => tasks.id, { onDelete: "cascade" }),
+  key: text("key").notNull(),
+  title: text("title").notNull(),
+  format: text("format").notNull().default("markdown"),
+  body: text("body").notNull().default(""),
+  latestRevisionId: uuid("latest_revision_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const issueDocumentRevisions = pgTable("issue_document_revisions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  documentId: uuid("document_id").notNull().references(() => issueDocuments.id, { onDelete: "cascade" }),
+  body: text("body").notNull(),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  createdByAgentId: uuid("created_by_agent_id").references(() => agents.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const issueAttachments = pgTable("issue_attachments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+  issueId: uuid("issue_id").notNull().references(() => tasks.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull().default(0),
+  url: text("url"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const issueWorkProducts = pgTable("issue_work_products", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  issueId: uuid("issue_id").notNull().references(() => tasks.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  title: text("title").notNull(),
+  content: jsonb("content").$type<Record<string, unknown>>().notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -249,6 +345,7 @@ export const costEvents = pgTable("cost_events", {
   heartbeatRunId: uuid("heartbeat_run_id").references(() => heartbeatRuns.id, { onDelete: "set null" }),
   amountCents: integer("amount_cents").notNull(),
   currency: text("currency").notNull().default("USD"),
+  biller: text("biller").notNull().default("platform"),
   provider: text("provider").notNull(),
   model: text("model"),
   direction: text("direction").notNull().default("debit"),

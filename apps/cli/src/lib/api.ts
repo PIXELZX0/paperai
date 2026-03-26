@@ -10,8 +10,21 @@ import type {
   BootstrapCeoResult,
   CliAuthChallengeStatus,
   Company,
+  CompanyCostOverview,
+  CompanySkill,
+  ExecutionWorkspace,
   Issue,
+  IssueAttachment,
   IssueComment,
+  IssueDocument,
+  IssueDocumentRevision,
+  IssueDocumentSummary,
+  IssueWorkProduct,
+  Plugin,
+  PluginHealth,
+  PluginRuntimeActionResult,
+  ProjectWorkspace,
+  Secret,
   Task,
   TaskComment,
 } from "@paperai/shared";
@@ -242,6 +255,71 @@ export class PaperAiApiClient {
     });
   }
 
+  listIssueDocuments(issueId: string) {
+    return this.request<IssueDocumentSummary[]>(`/issues/${encodeURIComponent(issueId)}/documents`);
+  }
+
+  createIssueDocument(
+    issueId: string,
+    payload: { key: string; title: string; format: "markdown" | "text"; body: string },
+  ) {
+    return this.request<IssueDocument>(`/issues/${encodeURIComponent(issueId)}/documents`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  updateIssueDocument(
+    documentId: string,
+    payload: { title?: string; format?: "markdown" | "text"; body?: string },
+  ) {
+    return this.request<IssueDocument>(`/issue-documents/${encodeURIComponent(documentId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  listIssueDocumentRevisions(documentId: string) {
+    return this.request<IssueDocumentRevision[]>(`/issue-documents/${encodeURIComponent(documentId)}/revisions`);
+  }
+
+  listIssueAttachments(issueId: string) {
+    return this.request<IssueAttachment[]>(`/issues/${encodeURIComponent(issueId)}/attachments`);
+  }
+
+  createIssueAttachment(
+    issueId: string,
+    payload: {
+      name: string;
+      contentType: string;
+      sizeBytes: number;
+      url?: string | null;
+      metadata?: Record<string, unknown>;
+    },
+  ) {
+    return this.request<IssueAttachment>(`/issues/${encodeURIComponent(issueId)}/attachments`, {
+      method: "POST",
+      body: JSON.stringify({
+        ...payload,
+        metadata: payload.metadata ?? {},
+      }),
+    });
+  }
+
+  listIssueWorkProducts(issueId: string) {
+    return this.request<IssueWorkProduct[]>(`/issues/${encodeURIComponent(issueId)}/work-products`);
+  }
+
+  createIssueWorkProduct(issueId: string, payload: { kind: string; title: string; content?: Record<string, unknown> }) {
+    return this.request<IssueWorkProduct>(`/issues/${encodeURIComponent(issueId)}/work-products`, {
+      method: "POST",
+      body: JSON.stringify({
+        ...payload,
+        content: payload.content ?? {},
+      }),
+    });
+  }
+
   listApprovals(companyId: string) {
     return this.request<ApprovalRequest[]>(`/approvals?companyId=${encodeURIComponent(companyId)}`);
   }
@@ -272,5 +350,208 @@ export class PaperAiApiClient {
 
   exportPackage(companyId: string) {
     return this.request<Record<string, string>>(`/packages/export?companyId=${encodeURIComponent(companyId)}`);
+  }
+
+  getOrgTree(companyId: string) {
+    return this.request(`/org-tree?companyId=${encodeURIComponent(companyId)}`);
+  }
+
+  async getOrgChartSvg(companyId: string) {
+    const response = await this.fetchImpl(joinUrl(this.apiUrl, `/org-chart.svg?companyId=${encodeURIComponent(companyId)}`), {
+      headers: {
+        ...(this.token ? { authorization: `Bearer ${this.token}` } : {}),
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new CliError(
+        `Request failed with status ${response.status}.`,
+        response.status === 401 ? 2 : 1,
+        text || undefined,
+      );
+    }
+
+    return await response.text();
+  }
+
+  listProjectWorkspaces(companyId: string, projectId: string) {
+    return this.request<ProjectWorkspace[]>(
+      `/project-workspaces?companyId=${encodeURIComponent(companyId)}&projectId=${encodeURIComponent(projectId)}`,
+    );
+  }
+
+  createProjectWorkspace(
+    companyId: string,
+    projectId: string,
+    payload: {
+      name: string;
+      cwd?: string | null;
+      repoUrl?: string | null;
+      repoRef?: string | null;
+      isPrimary: boolean;
+    },
+  ) {
+    return this.request<ProjectWorkspace>(
+      `/project-workspaces?companyId=${encodeURIComponent(companyId)}&projectId=${encodeURIComponent(projectId)}`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    );
+  }
+
+  listExecutionWorkspaces(companyId: string, filters: { projectId?: string; issueId?: string } = {}) {
+    const query = new URLSearchParams({ companyId });
+    if (filters.projectId) {
+      query.set("projectId", filters.projectId);
+    }
+    if (filters.issueId) {
+      query.set("issueId", filters.issueId);
+    }
+    return this.request<ExecutionWorkspace[]>(`/execution-workspaces?${query.toString()}`);
+  }
+
+  createExecutionWorkspace(
+    companyId: string,
+    payload: {
+      projectId?: string | null;
+      issueId?: string | null;
+      name: string;
+      cwd?: string | null;
+      repoUrl?: string | null;
+      baseRef?: string | null;
+      branchName?: string | null;
+      mode: ExecutionWorkspace["mode"];
+      status: ExecutionWorkspace["status"];
+    },
+  ) {
+    return this.request<ExecutionWorkspace>(`/execution-workspaces?companyId=${encodeURIComponent(companyId)}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  listSkills(companyId: string) {
+    return this.request<CompanySkill[]>(`/skills?companyId=${encodeURIComponent(companyId)}`);
+  }
+
+  createSkill(
+    companyId: string,
+    payload: {
+      slug: string;
+      name: string;
+      description?: string | null;
+      markdown: string;
+      sourceType: CompanySkill["sourceType"];
+      sourceLocator?: string | null;
+    },
+  ) {
+    return this.request<CompanySkill>(`/skills?companyId=${encodeURIComponent(companyId)}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  updateSkill(
+    skillId: string,
+    payload: Partial<{
+      slug: string;
+      name: string;
+      description: string | null;
+      markdown: string;
+      sourceType: CompanySkill["sourceType"];
+      sourceLocator: string | null;
+    }>,
+  ) {
+    return this.request<CompanySkill>(`/skills/${encodeURIComponent(skillId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  scanSkills(companyId: string, root: string, upsert = true) {
+    return this.request<CompanySkill[]>(`/skills/scan?companyId=${encodeURIComponent(companyId)}`, {
+      method: "POST",
+      body: JSON.stringify({ root, upsert }),
+    });
+  }
+
+  listSecrets(companyId: string) {
+    return this.request<Secret[]>(`/secrets?companyId=${encodeURIComponent(companyId)}`);
+  }
+
+  createSecret(companyId: string, payload: { name: string; value: string; valueHint?: string | null }) {
+    return this.request<Secret>(`/secrets?companyId=${encodeURIComponent(companyId)}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  updateSecret(secretId: string, payload: { value?: string; valueHint?: string | null }) {
+    return this.request<Secret>(`/secrets/${encodeURIComponent(secretId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  getCostOverview(companyId: string) {
+    return this.request<CompanyCostOverview>(`/costs/overview?companyId=${encodeURIComponent(companyId)}`);
+  }
+
+  listPlugins(companyId: string) {
+    return this.request<Plugin[]>(`/plugins?companyId=${encodeURIComponent(companyId)}`);
+  }
+
+  createPlugin(companyId: string, payload: { slug: string; name: string; manifest: Record<string, unknown>; config?: Record<string, unknown> }) {
+    return this.request<Plugin>(`/plugins?companyId=${encodeURIComponent(companyId)}`, {
+      method: "POST",
+      body: JSON.stringify({
+        ...payload,
+        config: payload.config ?? {},
+      }),
+    });
+  }
+
+  setPluginStatus(pluginId: string, status: "active" | "disabled") {
+    return this.request<Plugin>(`/plugins/${encodeURIComponent(pluginId)}/status`, {
+      method: "POST",
+      body: JSON.stringify({ status }),
+    });
+  }
+
+  upgradePlugin(pluginId: string, payload: { manifest: Record<string, unknown>; config?: Record<string, unknown> }) {
+    return this.request<Plugin>(`/plugins/${encodeURIComponent(pluginId)}/upgrade`, {
+      method: "POST",
+      body: JSON.stringify({
+        ...payload,
+        config: payload.config ?? {},
+      }),
+    });
+  }
+
+  getPluginHealth(pluginId: string) {
+    return this.request<PluginHealth>(`/plugins/${encodeURIComponent(pluginId)}/health`);
+  }
+
+  invokePluginTool(pluginId: string, toolName: string, input: Record<string, unknown> = {}) {
+    return this.request<PluginRuntimeActionResult>(`/plugins/${encodeURIComponent(pluginId)}/tools/invoke`, {
+      method: "POST",
+      body: JSON.stringify({ toolName, input }),
+    });
+  }
+
+  triggerPluginJob(pluginId: string, jobKey: string, input: Record<string, unknown> = {}) {
+    return this.request<PluginRuntimeActionResult>(`/plugins/${encodeURIComponent(pluginId)}/jobs/trigger`, {
+      method: "POST",
+      body: JSON.stringify({ jobKey, input }),
+    });
+  }
+
+  triggerPluginWebhook(pluginId: string, webhookKey: string, payload: Record<string, unknown> = {}) {
+    return this.request<PluginRuntimeActionResult>(`/plugins/${encodeURIComponent(pluginId)}/webhooks/trigger`, {
+      method: "POST",
+      body: JSON.stringify({ webhookKey, payload }),
+    });
   }
 }

@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { readdir, readFile } from "node:fs/promises";
+import path from "node:path";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { DomainEventBus } from "@paperai/core";
 import { hasBoardPermission } from "@paperai/core";
@@ -20,20 +22,37 @@ import type {
   BootstrapCeoResult,
   CliAuthChallengeStatus,
   BudgetPolicy,
+  CompanyCostOverview,
   Company,
   CompanyMember,
   CompanyPackageManifest,
+  CompanySkill,
   CostEvent,
+  CostSummary,
+  CostSummaryByAgent,
+  CostSummaryByBiller,
+  CostSummaryByProject,
+  CostSummaryByProvider,
+  ExecutionWorkspace,
   Goal,
   HeartbeatRun,
+  IssueAttachment,
   Issue,
   IssueComment,
+  IssueDocument,
+  IssueDocumentRevision,
+  IssueDocumentSummary,
+  IssueWorkProduct,
   Invite,
   Membership,
   MembershipRole,
   Plugin,
+  PluginHealth,
+  PluginRuntimeActionResult,
   Project,
+  ProjectWorkspace,
   Routine,
+  Secret,
   Task,
   TaskComment,
 } from "@paperai/shared";
@@ -53,6 +72,34 @@ function createOpaqueToken(prefix: string): string {
 
 function createChallengeCode(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function isSecretReference(value: unknown): value is { $secret: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      typeof (value as { $secret?: unknown }).$secret === "string" &&
+      (value as { $secret: string }).$secret.length > 0,
+  );
+}
+
+async function collectSkillFiles(root: string): Promise<string[]> {
+  const entries = await readdir(root, { withFileTypes: true });
+  const found: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      found.push(...(await collectSkillFiles(fullPath)));
+      continue;
+    }
+    if (entry.isFile() && entry.name === "SKILL.md") {
+      found.push(fullPath);
+    }
+  }
+
+  return found;
 }
 
 function mapUser(row: typeof schema.users.$inferSelect): AuthUser {
@@ -180,6 +227,66 @@ function mapProject(row: typeof schema.projects.$inferSelect): Project {
   };
 }
 
+function mapProjectWorkspace(row: typeof schema.projectWorkspaces.$inferSelect): ProjectWorkspace {
+  return {
+    id: row.id,
+    companyId: row.companyId,
+    projectId: row.projectId,
+    name: row.name,
+    cwd: row.cwd,
+    repoUrl: row.repoUrl,
+    repoRef: row.repoRef,
+    isPrimary: row.isPrimary,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapExecutionWorkspace(row: typeof schema.executionWorkspaces.$inferSelect): ExecutionWorkspace {
+  return {
+    id: row.id,
+    companyId: row.companyId,
+    projectId: row.projectId,
+    issueId: row.issueId,
+    name: row.name,
+    cwd: row.cwd,
+    repoUrl: row.repoUrl,
+    baseRef: row.baseRef,
+    branchName: row.branchName,
+    mode: row.mode as ExecutionWorkspace["mode"],
+    status: row.status as ExecutionWorkspace["status"],
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapCompanySkill(row: typeof schema.companySkills.$inferSelect): CompanySkill {
+  return {
+    id: row.id,
+    companyId: row.companyId,
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+    markdown: row.markdown,
+    sourceType: row.sourceType as CompanySkill["sourceType"],
+    sourceLocator: row.sourceLocator,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapSecret(row: typeof schema.secrets.$inferSelect): Secret {
+  return {
+    id: row.id,
+    companyId: row.companyId,
+    name: row.name,
+    provider: row.provider as Secret["provider"],
+    valueHint: row.valueHint,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
 function mapIssue(row: typeof schema.tasks.$inferSelect): Issue {
   return {
     id: row.id,
@@ -268,6 +375,62 @@ function mapIssueComment(row: typeof schema.taskComments.$inferSelect): IssueCom
     authorAgentId: row.authorAgentId,
     body: row.body,
     createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapIssueDocumentSummary(row: typeof schema.issueDocuments.$inferSelect): IssueDocumentSummary {
+  return {
+    id: row.id,
+    issueId: row.issueId,
+    key: row.key,
+    title: row.title,
+    format: row.format as IssueDocumentSummary["format"],
+    latestRevisionId: row.latestRevisionId,
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapIssueDocument(row: typeof schema.issueDocuments.$inferSelect): IssueDocument {
+  return {
+    ...mapIssueDocumentSummary(row),
+    body: row.body,
+  };
+}
+
+function mapIssueDocumentRevision(row: typeof schema.issueDocumentRevisions.$inferSelect): IssueDocumentRevision {
+  return {
+    id: row.id,
+    documentId: row.documentId,
+    body: row.body,
+    createdByUserId: row.createdByUserId,
+    createdByAgentId: row.createdByAgentId,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapIssueAttachment(row: typeof schema.issueAttachments.$inferSelect): IssueAttachment {
+  return {
+    id: row.id,
+    companyId: row.companyId,
+    issueId: row.issueId,
+    name: row.name,
+    contentType: row.contentType,
+    sizeBytes: row.sizeBytes,
+    url: row.url,
+    metadata: row.metadata,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapIssueWorkProduct(row: typeof schema.issueWorkProducts.$inferSelect): IssueWorkProduct {
+  return {
+    id: row.id,
+    issueId: row.issueId,
+    kind: row.kind,
+    title: row.title,
+    content: row.content,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
 
@@ -380,6 +543,7 @@ function mapCost(row: typeof schema.costEvents.$inferSelect): CostEvent {
     heartbeatRunId: row.heartbeatRunId,
     amountCents: row.amountCents,
     currency: row.currency,
+    biller: row.biller,
     provider: row.provider,
     model: row.model,
     direction: row.direction as CostEvent["direction"],
@@ -436,6 +600,46 @@ export class PlatformService {
     readonly db: Database,
     private readonly eventBus: DomainEventBus,
   ) {}
+
+  private async getSecretValue(companyId: string, name: string): Promise<string> {
+    const [secret] = await this.db
+      .select()
+      .from(schema.secrets)
+      .where(and(eq(schema.secrets.companyId, companyId), eq(schema.secrets.name, name)));
+
+    if (!secret) {
+      throw new Error(`secret_not_found:${name}`);
+    }
+
+    return secret.value;
+  }
+
+  async resolveSecretReferencesForCompany<T>(companyId: string, value: T): Promise<T> {
+    if (typeof value === "string" && value.startsWith("secret://")) {
+      return (await this.getSecretValue(companyId, value.slice("secret://".length))) as T;
+    }
+
+    if (isSecretReference(value)) {
+      return (await this.getSecretValue(companyId, value.$secret)) as T;
+    }
+
+    if (Array.isArray(value)) {
+      const resolved = await Promise.all(value.map((entry) => this.resolveSecretReferencesForCompany(companyId, entry)));
+      return resolved as T;
+    }
+
+    if (value && typeof value === "object") {
+      const entries = await Promise.all(
+        Object.entries(value as Record<string, unknown>).map(async ([key, entry]) => [
+          key,
+          await this.resolveSecretReferencesForCompany(companyId, entry),
+        ]),
+      );
+      return Object.fromEntries(entries) as T;
+    }
+
+    return value;
+  }
 
   static create(connectionString: string, eventBus: DomainEventBus): PlatformService {
     return new PlatformService(createDatabase(connectionString), eventBus);
@@ -1164,6 +1368,272 @@ export class PlatformService {
     return mapProject(project);
   }
 
+  async createProjectWorkspace(
+    actorUserId: string,
+    companyId: string,
+    projectId: string,
+    input: {
+      name: string;
+      cwd?: string | null;
+      repoUrl?: string | null;
+      repoRef?: string | null;
+      isPrimary: boolean;
+    },
+  ): Promise<ProjectWorkspace> {
+    await this.requirePermission(actorUserId, companyId, "project:write");
+
+    if (input.isPrimary) {
+      await this.db
+        .update(schema.projectWorkspaces)
+        .set({ isPrimary: false, updatedAt: new Date() })
+        .where(and(eq(schema.projectWorkspaces.companyId, companyId), eq(schema.projectWorkspaces.projectId, projectId)));
+    }
+
+    const [row] = await this.db
+      .insert(schema.projectWorkspaces)
+      .values({
+        companyId,
+        projectId,
+        name: input.name,
+        cwd: input.cwd ?? null,
+        repoUrl: input.repoUrl ?? null,
+        repoRef: input.repoRef ?? null,
+        isPrimary: input.isPrimary,
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    return mapProjectWorkspace(row);
+  }
+
+  async listProjectWorkspaces(actorUserId: string, companyId: string, projectId: string): Promise<ProjectWorkspace[]> {
+    await this.requirePermission(actorUserId, companyId, "audit:read");
+    const rows = await this.db
+      .select()
+      .from(schema.projectWorkspaces)
+      .where(and(eq(schema.projectWorkspaces.companyId, companyId), eq(schema.projectWorkspaces.projectId, projectId)))
+      .orderBy(desc(schema.projectWorkspaces.isPrimary), asc(schema.projectWorkspaces.createdAt));
+    return rows.map(mapProjectWorkspace);
+  }
+
+  async createExecutionWorkspace(
+    actorUserId: string,
+    companyId: string,
+    input: {
+      projectId?: string | null;
+      issueId?: string | null;
+      name: string;
+      cwd?: string | null;
+      repoUrl?: string | null;
+      baseRef?: string | null;
+      branchName?: string | null;
+      mode: ExecutionWorkspace["mode"];
+      status: ExecutionWorkspace["status"];
+    },
+  ): Promise<ExecutionWorkspace> {
+    await this.requirePermission(actorUserId, companyId, "project:write");
+    const [row] = await this.db
+      .insert(schema.executionWorkspaces)
+      .values({
+        companyId,
+        projectId: input.projectId ?? null,
+        issueId: input.issueId ?? null,
+        name: input.name,
+        cwd: input.cwd ?? null,
+        repoUrl: input.repoUrl ?? null,
+        baseRef: input.baseRef ?? null,
+        branchName: input.branchName ?? null,
+        mode: input.mode,
+        status: input.status,
+        updatedAt: new Date(),
+      })
+      .returning();
+    return mapExecutionWorkspace(row);
+  }
+
+  async listExecutionWorkspaces(
+    actorUserId: string,
+    companyId: string,
+    filters: { projectId?: string | null; issueId?: string | null } = {},
+  ): Promise<ExecutionWorkspace[]> {
+    await this.requirePermission(actorUserId, companyId, "audit:read");
+    const rows = await this.db
+      .select()
+      .from(schema.executionWorkspaces)
+      .where(
+        and(
+          eq(schema.executionWorkspaces.companyId, companyId),
+          filters.projectId ? eq(schema.executionWorkspaces.projectId, filters.projectId) : undefined,
+          filters.issueId ? eq(schema.executionWorkspaces.issueId, filters.issueId) : undefined,
+        ),
+      )
+      .orderBy(desc(schema.executionWorkspaces.createdAt));
+    return rows.map(mapExecutionWorkspace);
+  }
+
+  async createCompanySkill(
+    actorUserId: string,
+    companyId: string,
+    input: {
+      slug: string;
+      name: string;
+      description?: string | null;
+      markdown: string;
+      sourceType: CompanySkill["sourceType"];
+      sourceLocator?: string | null;
+    },
+  ): Promise<CompanySkill> {
+    await this.requirePermission(actorUserId, companyId, "package:import");
+    const [row] = await this.db
+      .insert(schema.companySkills)
+      .values({
+        companyId,
+        slug: input.slug,
+        name: input.name,
+        description: input.description ?? null,
+        markdown: input.markdown,
+        sourceType: input.sourceType,
+        sourceLocator: input.sourceLocator ?? null,
+        updatedAt: new Date(),
+      })
+      .returning();
+    return mapCompanySkill(row);
+  }
+
+  async updateCompanySkill(
+    actorUserId: string,
+    skillId: string,
+    input: Partial<Omit<CompanySkill, "id" | "companyId" | "createdAt" | "updatedAt">>,
+  ): Promise<CompanySkill> {
+    const [skill] = await this.db.select().from(schema.companySkills).where(eq(schema.companySkills.id, skillId));
+    if (!skill) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, skill.companyId, "package:import");
+    const [row] = await this.db
+      .update(schema.companySkills)
+      .set({
+        slug: input.slug ?? skill.slug,
+        name: input.name ?? skill.name,
+        description: input.description === undefined ? skill.description : input.description,
+        markdown: input.markdown ?? skill.markdown,
+        sourceType: input.sourceType ?? (skill.sourceType as CompanySkill["sourceType"]),
+        sourceLocator: input.sourceLocator === undefined ? skill.sourceLocator : input.sourceLocator,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.companySkills.id, skillId))
+      .returning();
+    return mapCompanySkill(row);
+  }
+
+  async listCompanySkills(actorUserId: string, companyId: string): Promise<CompanySkill[]> {
+    await this.requirePermission(actorUserId, companyId, "audit:read");
+    const rows = await this.db
+      .select()
+      .from(schema.companySkills)
+      .where(eq(schema.companySkills.companyId, companyId))
+      .orderBy(asc(schema.companySkills.slug));
+    return rows.map(mapCompanySkill);
+  }
+
+  async scanCompanySkills(actorUserId: string, companyId: string, root: string, upsert = true): Promise<CompanySkill[]> {
+    await this.requirePermission(actorUserId, companyId, "package:import");
+    const files = await collectSkillFiles(root);
+    const collected: CompanySkill[] = [];
+
+    for (const filePath of files) {
+      const markdown = await readFile(filePath, "utf8");
+      const slug = path.basename(path.dirname(filePath)).toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+      const name = path.basename(path.dirname(filePath));
+
+      const [existing] = await this.db
+        .select()
+        .from(schema.companySkills)
+        .where(and(eq(schema.companySkills.companyId, companyId), eq(schema.companySkills.slug, slug)));
+
+      if (existing && upsert) {
+        const [updated] = await this.db
+          .update(schema.companySkills)
+          .set({
+            name,
+            markdown,
+            sourceType: "local_path",
+            sourceLocator: filePath,
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.companySkills.id, existing.id))
+          .returning();
+        collected.push(mapCompanySkill(updated));
+        continue;
+      }
+
+      if (!existing) {
+        const [created] = await this.db
+          .insert(schema.companySkills)
+          .values({
+            companyId,
+            slug,
+            name,
+            markdown,
+            sourceType: "local_path",
+            sourceLocator: filePath,
+            updatedAt: new Date(),
+          })
+          .returning();
+        collected.push(mapCompanySkill(created));
+      }
+    }
+
+    return collected;
+  }
+
+  async createSecret(
+    actorUserId: string,
+    companyId: string,
+    input: { name: string; value: string; valueHint?: string | null },
+  ): Promise<Secret> {
+    await this.requirePermission(actorUserId, companyId, "company:update");
+    const [row] = await this.db
+      .insert(schema.secrets)
+      .values({
+        companyId,
+        name: input.name,
+        value: input.value,
+        valueHint: input.valueHint ?? null,
+        updatedAt: new Date(),
+      })
+      .returning();
+    return mapSecret(row);
+  }
+
+  async updateSecret(
+    actorUserId: string,
+    secretId: string,
+    input: { value?: string; valueHint?: string | null },
+  ): Promise<Secret> {
+    const [secret] = await this.db.select().from(schema.secrets).where(eq(schema.secrets.id, secretId));
+    if (!secret) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, secret.companyId, "company:update");
+    const [row] = await this.db
+      .update(schema.secrets)
+      .set({
+        value: input.value ?? secret.value,
+        valueHint: input.valueHint === undefined ? secret.valueHint : input.valueHint,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.secrets.id, secretId))
+      .returning();
+    return mapSecret(row);
+  }
+
+  async listSecrets(actorUserId: string, companyId: string): Promise<Secret[]> {
+    await this.requirePermission(actorUserId, companyId, "audit:read");
+    const rows = await this.db.select().from(schema.secrets).where(eq(schema.secrets.companyId, companyId));
+    return rows.map(mapSecret);
+  }
+
   async createIssue(
     actorUserId: string,
     companyId: string,
@@ -1351,6 +1821,200 @@ export class PlatformService {
     return rows.map(mapIssueComment);
   }
 
+  async createIssueDocument(
+    actorUserId: string,
+    issueId: string,
+    input: { key: string; title: string; format: IssueDocument["format"]; body: string },
+  ): Promise<IssueDocument> {
+    const issue = await this.getIssue(issueId);
+    if (!issue) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, issue.companyId, "issue:write");
+
+    const [document] = await this.db
+      .insert(schema.issueDocuments)
+      .values({
+        issueId,
+        key: input.key,
+        title: input.title,
+        format: input.format,
+        body: input.body,
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    const [revision] = await this.db
+      .insert(schema.issueDocumentRevisions)
+      .values({
+        documentId: document.id,
+        body: input.body,
+        createdByUserId: actorUserId,
+      })
+      .returning();
+
+    await this.db
+      .update(schema.issueDocuments)
+      .set({ latestRevisionId: revision.id, updatedAt: new Date() })
+      .where(eq(schema.issueDocuments.id, document.id));
+
+    return {
+      ...mapIssueDocument(document),
+      latestRevisionId: revision.id,
+    };
+  }
+
+  async updateIssueDocument(
+    actorUserId: string,
+    documentId: string,
+    input: { title?: string; format?: IssueDocument["format"]; body?: string },
+  ): Promise<IssueDocument> {
+    const [document] = await this.db.select().from(schema.issueDocuments).where(eq(schema.issueDocuments.id, documentId));
+    if (!document) {
+      throw new Error("not_found");
+    }
+    const issue = await this.getIssue(document.issueId);
+    if (!issue) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, issue.companyId, "issue:write");
+
+    let latestRevisionId = document.latestRevisionId;
+    if (input.body !== undefined && input.body !== document.body) {
+      const [revision] = await this.db
+        .insert(schema.issueDocumentRevisions)
+        .values({
+          documentId: document.id,
+          body: input.body,
+          createdByUserId: actorUserId,
+        })
+        .returning();
+      latestRevisionId = revision.id;
+    }
+
+    const [row] = await this.db
+      .update(schema.issueDocuments)
+      .set({
+        title: input.title ?? document.title,
+        format: input.format ?? (document.format as IssueDocument["format"]),
+        body: input.body ?? document.body,
+        latestRevisionId,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.issueDocuments.id, documentId))
+      .returning();
+
+    return mapIssueDocument(row);
+  }
+
+  async listIssueDocuments(actorUserId: string, issueId: string): Promise<IssueDocumentSummary[]> {
+    const issue = await this.getIssue(issueId);
+    if (!issue) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, issue.companyId, "audit:read");
+    const rows = await this.db
+      .select()
+      .from(schema.issueDocuments)
+      .where(eq(schema.issueDocuments.issueId, issueId))
+      .orderBy(asc(schema.issueDocuments.key));
+    return rows.map(mapIssueDocumentSummary);
+  }
+
+  async listIssueDocumentRevisions(actorUserId: string, documentId: string): Promise<IssueDocumentRevision[]> {
+    const [document] = await this.db.select().from(schema.issueDocuments).where(eq(schema.issueDocuments.id, documentId));
+    if (!document) {
+      throw new Error("not_found");
+    }
+    const issue = await this.getIssue(document.issueId);
+    if (!issue) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, issue.companyId, "audit:read");
+    const rows = await this.db
+      .select()
+      .from(schema.issueDocumentRevisions)
+      .where(eq(schema.issueDocumentRevisions.documentId, documentId))
+      .orderBy(desc(schema.issueDocumentRevisions.createdAt));
+    return rows.map(mapIssueDocumentRevision);
+  }
+
+  async createIssueAttachment(
+    actorUserId: string,
+    issueId: string,
+    input: { name: string; contentType: string; sizeBytes: number; url?: string | null; metadata: Record<string, unknown> },
+  ): Promise<IssueAttachment> {
+    const issue = await this.getIssue(issueId);
+    if (!issue) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, issue.companyId, "issue:write");
+    const [row] = await this.db
+      .insert(schema.issueAttachments)
+      .values({
+        companyId: issue.companyId,
+        issueId,
+        name: input.name,
+        contentType: input.contentType,
+        sizeBytes: input.sizeBytes,
+        url: input.url ?? null,
+        metadata: input.metadata,
+      })
+      .returning();
+    return mapIssueAttachment(row);
+  }
+
+  async listIssueAttachments(actorUserId: string, issueId: string): Promise<IssueAttachment[]> {
+    const issue = await this.getIssue(issueId);
+    if (!issue) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, issue.companyId, "audit:read");
+    const rows = await this.db
+      .select()
+      .from(schema.issueAttachments)
+      .where(eq(schema.issueAttachments.issueId, issueId))
+      .orderBy(desc(schema.issueAttachments.createdAt));
+    return rows.map(mapIssueAttachment);
+  }
+
+  async createIssueWorkProduct(
+    actorUserId: string,
+    issueId: string,
+    input: { kind: string; title: string; content: Record<string, unknown> },
+  ): Promise<IssueWorkProduct> {
+    const issue = await this.getIssue(issueId);
+    if (!issue) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, issue.companyId, "issue:write");
+    const [row] = await this.db
+      .insert(schema.issueWorkProducts)
+      .values({
+        issueId,
+        kind: input.kind,
+        title: input.title,
+        content: input.content,
+        updatedAt: new Date(),
+      })
+      .returning();
+    return mapIssueWorkProduct(row);
+  }
+
+  async listIssueWorkProducts(actorUserId: string, issueId: string): Promise<IssueWorkProduct[]> {
+    const issue = await this.getIssue(issueId);
+    if (!issue) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, issue.companyId, "audit:read");
+    const rows = await this.db
+      .select()
+      .from(schema.issueWorkProducts)
+      .where(eq(schema.issueWorkProducts.issueId, issueId))
+      .orderBy(desc(schema.issueWorkProducts.createdAt));
+    return rows.map(mapIssueWorkProduct);
+  }
+
   async createAgent(
     actorUserId: string,
     companyId: string,
@@ -1368,6 +2032,8 @@ export class PlatformService {
     },
   ) {
     await this.requirePermission(actorUserId, companyId, "agent:write");
+    const adapterConfig = await this.resolveSecretReferencesForCompany(companyId, input.adapterConfig ?? {});
+    const runtimeConfig = await this.resolveSecretReferencesForCompany(companyId, input.runtimeConfig ?? {});
     const [agent] = await this.db
       .insert(schema.agents)
       .values({
@@ -1378,8 +2044,8 @@ export class PlatformService {
         title: input.title,
         capabilities: input.capabilities,
         adapterType: input.adapterType,
-        adapterConfig: input.adapterConfig ?? {},
-        runtimeConfig: input.runtimeConfig ?? {},
+        adapterConfig,
+        runtimeConfig,
         permissions: input.permissions ?? [],
         budgetMonthlyCents: input.budgetMonthlyCents,
         updatedAt: new Date(),
@@ -1404,6 +2070,81 @@ export class PlatformService {
       .where(eq(schema.agents.companyId, companyId))
       .orderBy(asc(schema.agents.createdAt));
     return rows.map(mapAgent);
+  }
+
+  async getOrgTree(actorUserId: string, companyId: string) {
+    const agents = await this.listAgents(actorUserId, companyId);
+    const [company] = await this.db.select().from(schema.companies).where(eq(schema.companies.id, companyId));
+    if (!company) {
+      throw new Error("not_found");
+    }
+
+    const nodes = new Map(
+      agents.map((agent) => [
+        agent.id,
+        {
+          id: agent.id,
+          name: agent.name,
+          title: agent.title,
+          status: agent.status,
+          children: [] as Array<Record<string, unknown>>,
+        },
+      ]),
+    );
+
+    const roots: Array<Record<string, unknown>> = [];
+    for (const agent of agents) {
+      const node = nodes.get(agent.id)!;
+      if (agent.parentAgentId && nodes.has(agent.parentAgentId)) {
+        nodes.get(agent.parentAgentId)!.children.push(node);
+      } else {
+        roots.push(node);
+      }
+    }
+
+    return {
+      company: {
+        id: company.id,
+        name: company.name,
+        slug: company.slug,
+      },
+      agents: roots,
+    };
+  }
+
+  async getOrgChartSvg(actorUserId: string, companyId: string): Promise<string> {
+    const tree = await this.getOrgTree(actorUserId, companyId);
+    const flat: Array<{ name: string; title: string | null; status: string }> = [];
+    const visit = (nodes: Array<{ name: string; title: string | null; status: string; children: unknown[] }>) => {
+      for (const node of nodes) {
+        flat.push({ name: node.name, title: node.title, status: node.status });
+        visit(node.children as Array<{ name: string; title: string | null; status: string; children: unknown[] }>);
+      }
+    };
+    visit(tree.agents as Array<{ name: string; title: string | null; status: string; children: unknown[] }>);
+
+    const width = 960;
+    const rowHeight = 90;
+    const height = Math.max(220, flat.length * rowHeight + 120);
+    const cards = flat
+      .map((node, index) => {
+        const x = 80 + ((index % 3) * 280);
+        const y = 80 + Math.floor(index / 3) * rowHeight;
+        return [
+          `<rect x="${x}" y="${y}" width="220" height="56" rx="18" fill="#101826" stroke="#273244" />`,
+          `<text x="${x + 18}" y="${y + 24}" fill="#f8fafc" font-size="16" font-family="IBM Plex Sans, sans-serif">${node.name}</text>`,
+          `<text x="${x + 18}" y="${y + 42}" fill="#94a3b8" font-size="12" font-family="IBM Plex Sans, sans-serif">${node.title ?? node.status}</text>`,
+        ].join("");
+      })
+      .join("");
+
+    return [
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+      `<rect width="100%" height="100%" fill="#060816" />`,
+      `<text x="60" y="44" fill="#e2e8f0" font-size="28" font-family="IBM Plex Sans, sans-serif">${tree.company.name} Org Chart</text>`,
+      cards,
+      `</svg>`,
+    ].join("");
   }
 
   async getAgent(agentId: string): Promise<Agent | null> {
@@ -1906,6 +2647,7 @@ export class PlatformService {
         heartbeatRunId: input.heartbeatRunId,
         amountCents: input.amountCents,
         currency: input.currency,
+        biller: input.biller,
         provider: input.provider,
         model: input.model,
         direction: input.direction,
@@ -1924,6 +2666,59 @@ export class PlatformService {
       .where(eq(schema.costEvents.companyId, companyId))
       .orderBy(desc(schema.costEvents.createdAt));
     return rows.map(mapCost);
+  }
+
+  async getCostOverview(actorUserId: string, companyId: string): Promise<CompanyCostOverview> {
+    await this.requirePermission(actorUserId, companyId, "cost:read");
+    const [companyRow] = await this.db.select().from(schema.companies).where(eq(schema.companies.id, companyId));
+    if (!companyRow) {
+      throw new Error("not_found");
+    }
+
+    const costs = await this.db.select().from(schema.costEvents).where(eq(schema.costEvents.companyId, companyId));
+    const heartbeats = await this.db
+      .select()
+      .from(schema.heartbeatRuns)
+      .where(eq(schema.heartbeatRuns.companyId, companyId));
+    const tasks = await this.db.select().from(schema.tasks).where(eq(schema.tasks.companyId, companyId));
+
+    const heartbeatById = new Map(heartbeats.map((heartbeat) => [heartbeat.id, heartbeat]));
+    const taskById = new Map(tasks.map((task) => [task.id, task]));
+
+    const summary: CostSummary = {
+      monthSpendCents: costs.reduce((sum, cost) => sum + cost.amountCents, 0),
+      companyBudgetCents: companyRow.monthlyBudgetCents,
+      utilizationRatio:
+        companyRow.monthlyBudgetCents > 0
+          ? costs.reduce((sum, cost) => sum + cost.amountCents, 0) / companyRow.monthlyBudgetCents
+          : 0,
+    };
+
+    const byAgent = new Map<string, number>();
+    const byProject = new Map<string | null, number>();
+    const byProvider = new Map<string, number>();
+    const byBiller = new Map<string, number>();
+
+    for (const cost of costs) {
+      if (cost.agentId) {
+        byAgent.set(cost.agentId, (byAgent.get(cost.agentId) ?? 0) + cost.amountCents);
+      }
+
+      const heartbeat = cost.heartbeatRunId ? heartbeatById.get(cost.heartbeatRunId) : undefined;
+      const task = heartbeat?.taskId ? taskById.get(heartbeat.taskId) : undefined;
+      const projectId = task?.projectId ?? null;
+      byProject.set(projectId, (byProject.get(projectId) ?? 0) + cost.amountCents);
+      byProvider.set(cost.provider, (byProvider.get(cost.provider) ?? 0) + cost.amountCents);
+      byBiller.set(cost.biller, (byBiller.get(cost.biller) ?? 0) + cost.amountCents);
+    }
+
+    return {
+      summary,
+      byAgent: Array.from(byAgent, ([agentId, amountCents]) => ({ agentId, amountCents } satisfies CostSummaryByAgent)),
+      byProject: Array.from(byProject, ([projectId, amountCents]) => ({ projectId, amountCents } satisfies CostSummaryByProject)),
+      byProvider: Array.from(byProvider, ([provider, amountCents]) => ({ provider, amountCents } satisfies CostSummaryByProvider)),
+      byBiller: Array.from(byBiller, ([biller, amountCents]) => ({ biller, amountCents } satisfies CostSummaryByBiller)),
+    };
   }
 
   async listActivity(actorUserId: string, companyId: string): Promise<ActivityEvent[]> {
@@ -1963,6 +2758,7 @@ export class PlatformService {
   async createPlugin(actorUserId: string, companyId: string, input: { slug: string; name: string; manifest: Record<string, unknown>; config: Record<string, unknown> }) {
     await this.requirePermission(actorUserId, companyId, "plugin:write");
     const manifest = validatePluginManifest(input.manifest);
+    const config = await this.resolveSecretReferencesForCompany(companyId, input.config);
     const [row] = await this.db
       .insert(schema.plugins)
       .values({
@@ -1971,7 +2767,7 @@ export class PlatformService {
         name: input.name,
         status: "active",
         manifest: manifest as unknown as Record<string, unknown>,
-        config: input.config,
+        config,
         updatedAt: new Date(),
       })
       .returning();
@@ -1995,6 +2791,156 @@ export class PlatformService {
     await this.requirePermission(actorUserId, companyId, "audit:read");
     const rows = await this.db.select().from(schema.plugins).where(eq(schema.plugins.companyId, companyId));
     return rows.map(mapPlugin);
+  }
+
+  async setPluginStatus(actorUserId: string, pluginId: string, status: "active" | "disabled"): Promise<Plugin> {
+    const [plugin] = await this.db.select().from(schema.plugins).where(eq(schema.plugins.id, pluginId));
+    if (!plugin) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, plugin.companyId, "plugin:write");
+    const [row] = await this.db
+      .update(schema.plugins)
+      .set({
+        status,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.plugins.id, pluginId))
+      .returning();
+    return mapPlugin(row);
+  }
+
+  async upgradePlugin(
+    actorUserId: string,
+    pluginId: string,
+    input: { manifest: Record<string, unknown>; config: Record<string, unknown> },
+  ): Promise<Plugin> {
+    const [plugin] = await this.db.select().from(schema.plugins).where(eq(schema.plugins.id, pluginId));
+    if (!plugin) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, plugin.companyId, "plugin:write");
+    const manifest = validatePluginManifest(input.manifest);
+    const config = await this.resolveSecretReferencesForCompany(plugin.companyId, input.config);
+    const [row] = await this.db
+      .update(schema.plugins)
+      .set({
+        manifest: manifest as unknown as Record<string, unknown>,
+        config,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.plugins.id, pluginId))
+      .returning();
+    return mapPlugin(row);
+  }
+
+  async getPluginHealth(actorUserId: string, pluginId: string): Promise<PluginHealth> {
+    const [plugin] = await this.db.select().from(schema.plugins).where(eq(schema.plugins.id, pluginId));
+    if (!plugin) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, plugin.companyId, "audit:read");
+    const manifest = plugin.manifest as unknown as Plugin["manifest"];
+
+    return {
+      pluginId: plugin.id,
+      status: plugin.status === "disabled" ? "disabled" : "healthy",
+      message:
+        plugin.status === "disabled"
+          ? "Plugin is disabled."
+          : `Plugin ${plugin.name} is installed with ${manifest.capabilities.length} capabilities.`,
+      checkedAt: new Date().toISOString(),
+      capabilities: manifest.capabilities,
+    };
+  }
+
+  async getPluginUiBridge(actorUserId: string, pluginId: string) {
+    const [row] = await this.db.select().from(schema.plugins).where(eq(schema.plugins.id, pluginId));
+    if (!row) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, row.companyId, "audit:read");
+    const plugin = mapPlugin(row);
+    return {
+      pluginId: plugin.id,
+      slug: plugin.slug,
+      name: plugin.name,
+      status: plugin.status,
+      slots: plugin.manifest.ui ?? [],
+    };
+  }
+
+  private buildPluginActionResult(
+    plugin: Plugin,
+    kind: PluginRuntimeActionResult["kind"],
+    key: string,
+    result: Record<string, unknown>,
+  ): PluginRuntimeActionResult {
+    return {
+      pluginId: plugin.id,
+      kind,
+      key,
+      ok: plugin.status === "active",
+      at: new Date().toISOString(),
+      result,
+    };
+  }
+
+  async invokePluginTool(
+    actorUserId: string,
+    pluginId: string,
+    toolName: string,
+    input: Record<string, unknown>,
+  ): Promise<PluginRuntimeActionResult> {
+    const [row] = await this.db.select().from(schema.plugins).where(eq(schema.plugins.id, pluginId));
+    if (!row) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, row.companyId, "plugin:write");
+    const plugin = mapPlugin(row);
+    const tool = plugin.manifest.tools?.find((entry) => entry.name === toolName);
+    if (!tool) {
+      throw new Error("plugin_tool_not_found");
+    }
+    return this.buildPluginActionResult(plugin, "tool", toolName, { input, description: tool.description });
+  }
+
+  async triggerPluginJob(
+    actorUserId: string,
+    pluginId: string,
+    jobKey: string,
+    input: Record<string, unknown>,
+  ): Promise<PluginRuntimeActionResult> {
+    const [row] = await this.db.select().from(schema.plugins).where(eq(schema.plugins.id, pluginId));
+    if (!row) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, row.companyId, "plugin:write");
+    const plugin = mapPlugin(row);
+    const job = plugin.manifest.jobs?.find((entry) => entry.key === jobKey);
+    if (!job) {
+      throw new Error("plugin_job_not_found");
+    }
+    return this.buildPluginActionResult(plugin, "job", jobKey, { input, schedule: job.schedule });
+  }
+
+  async triggerPluginWebhook(
+    actorUserId: string,
+    pluginId: string,
+    webhookKey: string,
+    payload: Record<string, unknown>,
+  ): Promise<PluginRuntimeActionResult> {
+    const [row] = await this.db.select().from(schema.plugins).where(eq(schema.plugins.id, pluginId));
+    if (!row) {
+      throw new Error("not_found");
+    }
+    await this.requirePermission(actorUserId, row.companyId, "plugin:write");
+    const plugin = mapPlugin(row);
+    const webhook = plugin.manifest.webhooks?.find((entry) => entry.key === webhookKey);
+    if (!webhook) {
+      throw new Error("plugin_webhook_not_found");
+    }
+    return this.buildPluginActionResult(plugin, "webhook", webhookKey, { payload, description: webhook.description ?? null });
   }
 
   async importCompanyPackage(actorUserId: string, companyId: string, root: string): Promise<CompanyPackageManifest> {

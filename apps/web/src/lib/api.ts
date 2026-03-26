@@ -3,20 +3,32 @@ import type {
   Agent,
   ApprovalRequest,
   Company,
+  CompanyCostOverview,
   CompanyMember,
+  CompanySkill,
   CostEvent,
+  ExecutionWorkspace,
   Goal,
   HeartbeatRun,
   Issue,
+  IssueAttachment,
   IssueComment,
+  IssueDocument,
+  IssueDocumentRevision,
+  IssueDocumentSummary,
+  IssueWorkProduct,
   Invite,
   Plugin,
+  PluginHealth,
+  PluginRuntimeActionResult,
   Project,
+  ProjectWorkspace,
   Routine,
+  Secret,
   Task,
 } from "@paperai/shared";
 
-const API_BASE =
+export const API_BASE =
   import.meta.env.VITE_API_BASE_URL ??
   (import.meta.env.DEV ? "http://localhost:3001/api/v1" : `${window.location.origin}/api/v1`);
 
@@ -111,6 +123,62 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   issueComments: (token: string, issueId: string) => apiRequest<IssueComment[]>(`/issues/${issueId}/comments`, token),
+  issueDocuments: (token: string, issueId: string) =>
+    apiRequest<IssueDocumentSummary[]>(`/issues/${issueId}/documents`, token),
+  createIssueDocument: (
+    token: string,
+    issueId: string,
+    payload: { key: string; title: string; format: "markdown" | "text"; body: string },
+  ) =>
+    apiRequest<IssueDocument>(`/issues/${issueId}/documents`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateIssueDocument: (
+    token: string,
+    documentId: string,
+    payload: { title?: string; format?: "markdown" | "text"; body?: string },
+  ) =>
+    apiRequest<IssueDocument>(`/issue-documents/${documentId}`, token, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  issueDocumentRevisions: (token: string, documentId: string) =>
+    apiRequest<IssueDocumentRevision[]>(`/issue-documents/${documentId}/revisions`, token),
+  issueAttachments: (token: string, issueId: string) =>
+    apiRequest<IssueAttachment[]>(`/issues/${issueId}/attachments`, token),
+  createIssueAttachment: (
+    token: string,
+    issueId: string,
+    payload: {
+      name: string;
+      contentType: string;
+      sizeBytes: number;
+      url?: string | null;
+      metadata?: Record<string, unknown>;
+    },
+  ) =>
+    apiRequest<IssueAttachment>(`/issues/${issueId}/attachments`, token, {
+      method: "POST",
+      body: JSON.stringify({
+        ...payload,
+        metadata: payload.metadata ?? {},
+      }),
+    }),
+  issueWorkProducts: (token: string, issueId: string) =>
+    apiRequest<IssueWorkProduct[]>(`/issues/${issueId}/work-products`, token),
+  createIssueWorkProduct: (
+    token: string,
+    issueId: string,
+    payload: { kind: string; title: string; content?: Record<string, unknown> },
+  ) =>
+    apiRequest<IssueWorkProduct>(`/issues/${issueId}/work-products`, token, {
+      method: "POST",
+      body: JSON.stringify({
+        ...payload,
+        content: payload.content ?? {},
+      }),
+    }),
   addIssueComment: (token: string, issueId: string, body: string) =>
     apiRequest<IssueComment>(`/issues/${issueId}/comments`, token, {
       method: "POST",
@@ -144,8 +212,81 @@ export const api = {
     }),
   heartbeats: (token: string, companyId: string) => apiRequest<HeartbeatRun[]>(`/heartbeats?companyId=${companyId}`, token),
   costs: (token: string, companyId: string) => apiRequest<CostEvent[]>(`/costs?companyId=${companyId}`, token),
+  costOverview: (token: string, companyId: string) =>
+    apiRequest<CompanyCostOverview>(`/costs/overview?companyId=${companyId}`, token),
   activity: (token: string, companyId: string) => apiRequest<ActivityEvent[]>(`/activity?companyId=${companyId}`, token),
+  orgTree: (token: string, companyId: string) => apiRequest(`/org-tree?companyId=${companyId}`, token),
   plugins: (token: string, companyId: string) => apiRequest<Plugin[]>(`/plugins?companyId=${companyId}`, token),
+  createPlugin: (token: string, companyId: string, payload: Record<string, unknown>) =>
+    apiRequest<Plugin>(`/plugins?companyId=${companyId}`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  setPluginStatus: (token: string, pluginId: string, status: "active" | "disabled") =>
+    apiRequest<Plugin>(`/plugins/${pluginId}/status`, token, {
+      method: "POST",
+      body: JSON.stringify({ status }),
+    }),
+  upgradePlugin: (token: string, pluginId: string, payload: Record<string, unknown>) =>
+    apiRequest<Plugin>(`/plugins/${pluginId}/upgrade`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  pluginHealth: (token: string, pluginId: string) => apiRequest<PluginHealth>(`/plugins/${pluginId}/health`, token),
+  invokePluginTool: (token: string, pluginId: string, toolName: string, input: Record<string, unknown>) =>
+    apiRequest<PluginRuntimeActionResult>(`/plugins/${pluginId}/tools/invoke`, token, {
+      method: "POST",
+      body: JSON.stringify({ toolName, input }),
+    }),
+  triggerPluginJob: (token: string, pluginId: string, jobKey: string, input: Record<string, unknown>) =>
+    apiRequest<PluginRuntimeActionResult>(`/plugins/${pluginId}/jobs/trigger`, token, {
+      method: "POST",
+      body: JSON.stringify({ jobKey, input }),
+    }),
+  triggerPluginWebhook: (token: string, pluginId: string, webhookKey: string, payload: Record<string, unknown>) =>
+    apiRequest<PluginRuntimeActionResult>(`/plugins/${pluginId}/webhooks/trigger`, token, {
+      method: "POST",
+      body: JSON.stringify({ webhookKey, payload }),
+    }),
+  skills: (token: string, companyId: string) => apiRequest<CompanySkill[]>(`/skills?companyId=${companyId}`, token),
+  createSkill: (token: string, companyId: string, payload: Record<string, unknown>) =>
+    apiRequest<CompanySkill>(`/skills?companyId=${companyId}`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  scanSkills: (token: string, companyId: string, payload: { root: string; upsert?: boolean }) =>
+    apiRequest<CompanySkill[]>(`/skills/scan?companyId=${companyId}`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  secrets: (token: string, companyId: string) => apiRequest<Secret[]>(`/secrets?companyId=${companyId}`, token),
+  createSecret: (token: string, companyId: string, payload: Record<string, unknown>) =>
+    apiRequest<Secret>(`/secrets?companyId=${companyId}`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  projectWorkspaces: (token: string, companyId: string, projectId: string) =>
+    apiRequest<ProjectWorkspace[]>(`/project-workspaces?companyId=${companyId}&projectId=${projectId}`, token),
+  createProjectWorkspace: (token: string, companyId: string, projectId: string, payload: Record<string, unknown>) =>
+    apiRequest<ProjectWorkspace>(`/project-workspaces?companyId=${companyId}&projectId=${projectId}`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  executionWorkspaces: (token: string, companyId: string, filters?: { projectId?: string; issueId?: string }) => {
+    const query = new URLSearchParams({ companyId });
+    if (filters?.projectId) {
+      query.set("projectId", filters.projectId);
+    }
+    if (filters?.issueId) {
+      query.set("issueId", filters.issueId);
+    }
+    return apiRequest<ExecutionWorkspace[]>(`/execution-workspaces?${query.toString()}`, token);
+  },
+  createExecutionWorkspace: (token: string, companyId: string, payload: Record<string, unknown>) =>
+    apiRequest<ExecutionWorkspace>(`/execution-workspaces?companyId=${companyId}`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   routines: (token: string, companyId: string) => apiRequest<Routine[]>(`/routines?companyId=${companyId}`, token),
 };
 

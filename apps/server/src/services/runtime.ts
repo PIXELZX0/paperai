@@ -42,7 +42,8 @@ export class RuntimeOrchestrator {
     if (!adapter) {
       throw new Error("unknown_adapter");
     }
-    return await adapter.validateConfig(agent.adapterConfig);
+    const resolvedConfig = await this.service.resolveSecretReferencesForCompany(agent.companyId, agent.adapterConfig);
+    return await adapter.validateConfig(resolvedConfig);
   }
 
   private async pickTask(agent: Agent): Promise<Task | null> {
@@ -224,6 +225,14 @@ export class RuntimeOrchestrator {
       lastHeartbeatAt: new Date().toISOString(),
     });
 
+    const resolvedAdapterConfig = await this.service.resolveSecretReferencesForCompany(agent.companyId, agent.adapterConfig);
+    const resolvedRuntimeConfig = await this.service.resolveSecretReferencesForCompany(agent.companyId, agent.runtimeConfig);
+    const executionAgent: Agent = {
+      ...agent,
+      adapterConfig: resolvedAdapterConfig,
+      runtimeConfig: resolvedRuntimeConfig,
+    };
+
     let task = run.taskId ? await this.service.getTask(run.taskId) : await this.pickTask(agent);
 
     if (task && task.status !== "in_progress") {
@@ -234,14 +243,14 @@ export class RuntimeOrchestrator {
       const instructions = buildExecutionInstructions(company, agent, task);
       const result = await adapter.execute({
         company,
-        agent,
+        agent: executionAgent,
         task,
         instructions,
         env: {
           PAPERAI_HEARTBEAT_RUN_ID: run.id,
         },
         session: agent.sessionState,
-        cwd: typeof agent.runtimeConfig.cwd === "string" ? agent.runtimeConfig.cwd : undefined,
+        cwd: typeof executionAgent.runtimeConfig.cwd === "string" ? executionAgent.runtimeConfig.cwd : undefined,
       });
 
       const costCents = result.usage?.costCents ?? 0;
@@ -266,12 +275,13 @@ export class RuntimeOrchestrator {
         await this.service.addCostEvent({
           companyId: company.id,
           agentId: agent.id,
-          heartbeatRunId: run.id,
-          amountCents: costCents,
-          currency: "USD",
-          provider: result.usage?.provider ?? agent.adapterType,
-          model: result.usage?.model ?? null,
-          direction: "debit",
+        heartbeatRunId: run.id,
+        amountCents: costCents,
+        currency: "USD",
+        biller: "platform",
+        provider: result.usage?.provider ?? agent.adapterType,
+        model: result.usage?.model ?? null,
+        direction: "debit",
         });
       }
 

@@ -38,6 +38,52 @@ This document covers the first operating-control-plane endpoints added in the Pa
 - `GET /api/v1/agents/me`
   - Requires agent authentication.
 
+## Org / Costs / Workspaces
+
+- `GET /api/v1/org-tree`
+  - Returns the company org hierarchy rooted at top-level agents.
+- `GET /api/v1/org-chart.svg`
+  - Returns an SVG export of the same org hierarchy.
+- `GET /api/v1/costs/overview`
+  - Returns aggregated spend by agent, project, provider, and biller.
+- `GET /api/v1/project-workspaces`
+- `POST /api/v1/project-workspaces`
+- `GET /api/v1/execution-workspaces`
+- `POST /api/v1/execution-workspaces`
+
+## Company Skills / Secrets
+
+- `GET /api/v1/skills`
+- `POST /api/v1/skills`
+- `PATCH /api/v1/skills/:skillId`
+- `POST /api/v1/skills/scan`
+  - Imports local `SKILL.md` files from a filesystem root.
+- `GET /api/v1/secrets`
+- `POST /api/v1/secrets`
+- `PATCH /api/v1/secrets/:secretId`
+  - Secret references can be used in agent and plugin config via either `secret://NAME` or `{ "$secret": "NAME" }`.
+
+## Issue Artifacts
+
+- `GET /api/v1/issues/:issueId/documents`
+- `POST /api/v1/issues/:issueId/documents`
+- `PATCH /api/v1/issue-documents/:documentId`
+- `GET /api/v1/issue-documents/:documentId/revisions`
+- `GET /api/v1/issues/:issueId/attachments`
+- `POST /api/v1/issues/:issueId/attachments`
+- `GET /api/v1/issues/:issueId/work-products`
+- `POST /api/v1/issues/:issueId/work-products`
+
+## Plugin Runtime
+
+- `POST /api/v1/plugins/:pluginId/status`
+- `POST /api/v1/plugins/:pluginId/upgrade`
+- `GET /api/v1/plugins/:pluginId/health`
+- `POST /api/v1/plugins/:pluginId/tools/invoke`
+- `POST /api/v1/plugins/:pluginId/jobs/trigger`
+- `POST /api/v1/plugins/:pluginId/webhooks/trigger`
+- `GET /api/v1/plugins/:pluginId/ui`
+
 ## Compatibility
 
 - `issue` is the canonical work item model.

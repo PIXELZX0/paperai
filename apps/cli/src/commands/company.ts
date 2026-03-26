@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import type { CommandContext } from "../lib/context.js";
 import { printJson } from "../lib/output.js";
-import { addApiOptions } from "./options.js";
+import { addApiOptions, addCompanyOption } from "./options.js";
 
 export function registerCompanyCommands(program: Command, context: CommandContext) {
   const company = program.command("company").description("Company selection helpers");
@@ -47,5 +47,54 @@ export function registerCompanyCommands(program: Command, context: CommandContex
           company: selected,
         });
       }),
+  );
+
+  addCompanyOption(
+    addApiOptions(
+      company
+        .command("org")
+        .description("Read the company org tree")
+        .action(async (options) => {
+          const client = await context.createApiClient({
+            apiUrl: options.apiUrl,
+            token: options.token,
+          });
+          const companyId = await context.resolveCompanyId(options.company);
+          printJson(context.runtime, await client.getOrgTree(companyId!));
+        }),
+    ),
+  );
+
+  addCompanyOption(
+    addApiOptions(
+      company
+        .command("org-svg")
+        .description("Render the company org chart as SVG")
+        .action(async (options) => {
+          const client = await context.createApiClient({
+            apiUrl: options.apiUrl,
+            token: options.token,
+          });
+          const companyId = await context.resolveCompanyId(options.company);
+          context.runtime.stdout.write(await client.getOrgChartSvg(companyId!));
+          context.runtime.stdout.write("\n");
+        }),
+    ),
+  );
+
+  addCompanyOption(
+    addApiOptions(
+      company
+        .command("cost-overview")
+        .description("Read aggregated company cost summaries")
+        .action(async (options) => {
+          const client = await context.createApiClient({
+            apiUrl: options.apiUrl,
+            token: options.token,
+          });
+          const companyId = await context.resolveCompanyId(options.company);
+          printJson(context.runtime, await client.getCostOverview(companyId!));
+        }),
+    ),
   );
 }

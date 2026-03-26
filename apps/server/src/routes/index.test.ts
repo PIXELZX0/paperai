@@ -30,6 +30,10 @@ function createPlatformServiceStub() {
     createBoardClaimChallenge: vi.fn(),
     getAgentForActor: vi.fn(),
     getAgentRuntimeState: vi.fn(),
+    getOrgTree: vi.fn(),
+    getCostOverview: vi.fn(),
+    createProjectWorkspace: vi.fn(),
+    setPluginStatus: vi.fn(),
     pauseAgent: vi.fn(),
     resumeAgent: vi.fn(),
     getTaskForActor: vi.fn(),
@@ -328,6 +332,165 @@ describe("resource read routes", () => {
     expect(response.json()).toMatchObject({ id: "agent-1", status: "idle" });
     expect(resumeAgent).toHaveBeenCalledWith("user-1", "agent-1");
     expect(runtime.requestWake).toHaveBeenCalledWith("company-1", "agent-1", "manual", "resume");
+    await app.close();
+  });
+
+  it("returns the org tree through GET /api/v1/org-tree", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const getOrgTree = vi.spyOn(platformService, "getOrgTree").mockResolvedValue({
+      company: { id: "company-1", name: "PaperAI", slug: "paperai" },
+      agents: [{ id: "agent-1", name: "CEO", title: "Chief Executive Officer", status: "idle", children: [] }],
+    });
+
+    const app = await createApp({
+      config: testConfig,
+      platformService,
+      runtime,
+    });
+
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/org-tree?companyId=company-1",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ company: { slug: "paperai" } });
+    expect(getOrgTree).toHaveBeenCalledWith("user-1", "company-1");
+    await app.close();
+  });
+
+  it("returns the cost overview through GET /api/v1/costs/overview", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const getCostOverview = vi.spyOn(platformService, "getCostOverview").mockResolvedValue({
+      summary: {
+        monthSpendCents: 1200,
+        companyBudgetCents: 5000,
+        utilizationRatio: 0.24,
+      },
+      byAgent: [{ agentId: "agent-1", amountCents: 1200 }],
+      byProject: [],
+      byProvider: [{ provider: "openai", amountCents: 1200 }],
+      byBiller: [{ biller: "platform", amountCents: 1200 }],
+    });
+
+    const app = await createApp({
+      config: testConfig,
+      platformService,
+      runtime,
+    });
+
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/costs/overview?companyId=company-1",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ summary: { monthSpendCents: 1200 } });
+    expect(getCostOverview).toHaveBeenCalledWith("user-1", "company-1");
+    await app.close();
+  });
+
+  it("creates a project workspace through POST /api/v1/project-workspaces", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const createProjectWorkspace = vi.spyOn(platformService, "createProjectWorkspace").mockResolvedValue({
+      id: "workspace-1",
+      companyId: "company-1",
+      projectId: "project-1",
+      name: "main",
+      cwd: "/workspace/paperai",
+      repoUrl: "https://github.com/paperai/paperai",
+      repoRef: "main",
+      isPrimary: true,
+      createdAt: "2026-03-26T00:00:00.000Z",
+      updatedAt: "2026-03-26T00:00:00.000Z",
+    });
+
+    const app = await createApp({
+      config: testConfig,
+      platformService,
+      runtime,
+    });
+
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/project-workspaces?companyId=company-1&projectId=project-1",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+      payload: {
+        name: "main",
+        cwd: "/workspace/paperai",
+        repoUrl: "https://github.com/paperai/paperai",
+        repoRef: "main",
+        isPrimary: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ id: "workspace-1", projectId: "project-1" });
+    expect(createProjectWorkspace).toHaveBeenCalledWith("user-1", "company-1", "project-1", {
+      name: "main",
+      cwd: "/workspace/paperai",
+      repoUrl: "https://github.com/paperai/paperai",
+      repoRef: "main",
+      isPrimary: true,
+    });
+    await app.close();
+  });
+
+  it("updates plugin status through POST /api/v1/plugins/:pluginId/status", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const setPluginStatus = vi.spyOn(platformService, "setPluginStatus").mockResolvedValue({
+      id: "plugin-1",
+      companyId: "company-1",
+      slug: "release-bot",
+      name: "Release Bot",
+      status: "disabled",
+      manifest: {
+        slug: "release-bot",
+        name: "Release Bot",
+        version: "1.0.0",
+        capabilities: ["tool"],
+      },
+      config: {},
+      createdAt: "2026-03-26T00:00:00.000Z",
+      updatedAt: "2026-03-26T00:00:00.000Z",
+    });
+
+    const app = await createApp({
+      config: testConfig,
+      platformService,
+      runtime,
+    });
+
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/plugins/plugin-1/status",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+      payload: {
+        status: "disabled",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ id: "plugin-1", status: "disabled" });
+    expect(setPluginStatus).toHaveBeenCalledWith("user-1", "plugin-1", "disabled");
     await app.close();
   });
 });

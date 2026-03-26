@@ -379,4 +379,92 @@ describe("papercli", () => {
     expect(result.exitCode).toBe(0);
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
+
+  it("routes workspace, skill, secret, plugin, and company operator commands to the new APIs", async () => {
+    const calls: Array<{ url: string; method: string; body?: unknown }> = [];
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(url),
+        method: init?.method ?? "GET",
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      });
+      return jsonResponse({ ok: true });
+    });
+
+    const env = {
+      PAPERAI_TOKEN: "token",
+      PAPERAI_COMPANY_ID: "company-1",
+    };
+
+    await executeCli({
+      argv: ["workspace", "create-project", "--project", "project-1", "--name", "main", "--primary"],
+      env,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await executeCli({
+      argv: ["skill", "scan", "--root", "/tmp/skills"],
+      env,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await executeCli({
+      argv: ["secret", "create", "--name", "OPENAI_API_KEY", "--value", "sk-test", "--value-hint", "sk-...test"],
+      env,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await executeCli({
+      argv: ["plugin", "health", "plugin-1"],
+      env,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await executeCli({
+      argv: ["company", "cost-overview"],
+      env,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(calls).toEqual([
+      {
+        url: "http://localhost:3001/api/v1/project-workspaces?companyId=company-1&projectId=project-1",
+        method: "POST",
+        body: {
+          name: "main",
+          cwd: null,
+          repoUrl: null,
+          repoRef: null,
+          isPrimary: true,
+        },
+      },
+      {
+        url: "http://localhost:3001/api/v1/skills/scan?companyId=company-1",
+        method: "POST",
+        body: {
+          root: "/tmp/skills",
+          upsert: true,
+        },
+      },
+      {
+        url: "http://localhost:3001/api/v1/secrets?companyId=company-1",
+        method: "POST",
+        body: {
+          name: "OPENAI_API_KEY",
+          value: "sk-test",
+          valueHint: "sk-...test",
+        },
+      },
+      {
+        url: "http://localhost:3001/api/v1/plugins/plugin-1/health",
+        method: "GET",
+        body: undefined,
+      },
+      {
+        url: "http://localhost:3001/api/v1/costs/overview?companyId=company-1",
+        method: "GET",
+        body: undefined,
+      },
+    ]);
+  });
 });

@@ -238,6 +238,7 @@ export interface CostEvent {
   heartbeatRunId: string | null;
   amountCents: number;
   currency: string;
+  biller: string;
   provider: string;
   model: string | null;
   direction: "debit" | "credit";
@@ -511,6 +512,15 @@ export interface IssueDocument extends IssueDocumentSummary {
   body: string;
 }
 
+export interface IssueDocumentRevision {
+  id: string;
+  documentId: string;
+  body: string;
+  createdByUserId: string | null;
+  createdByAgentId: string | null;
+  createdAt: string;
+}
+
 export interface IssueAttachment {
   id: string;
   companyId: string;
@@ -518,6 +528,8 @@ export interface IssueAttachment {
   name: string;
   contentType: string;
   sizeBytes: number;
+  url: string | null;
+  metadata: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -550,6 +562,36 @@ export interface CostSummaryByProject {
 export interface CostSummaryByProvider {
   provider: string;
   amountCents: number;
+}
+
+export interface CostSummaryByBiller {
+  biller: string;
+  amountCents: number;
+}
+
+export interface CompanyCostOverview {
+  summary: CostSummary;
+  byAgent: CostSummaryByAgent[];
+  byProject: CostSummaryByProject[];
+  byProvider: CostSummaryByProvider[];
+  byBiller: CostSummaryByBiller[];
+}
+
+export interface PluginHealth {
+  pluginId: string;
+  status: "healthy" | "degraded" | "disabled";
+  message: string;
+  checkedAt: string;
+  capabilities: PluginManifest["capabilities"];
+}
+
+export interface PluginRuntimeActionResult {
+  pluginId: string;
+  kind: "tool" | "job" | "webhook" | "ui";
+  key: string;
+  ok: boolean;
+  at: string;
+  result: Record<string, unknown>;
 }
 
 export interface PaperAiDatabaseBackupConfig {

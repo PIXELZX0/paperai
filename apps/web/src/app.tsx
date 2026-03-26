@@ -5,7 +5,7 @@ import { DashboardPage } from "./routes/dashboard-page.js";
 
 const router = createBrowserRouter([
   { path: "/", element: <AuthPage /> },
-  { path: "/app", element: <DashboardPage /> },
+  { path: "/app/:section?", element: <DashboardPage /> },
 ]);
 
 const queryClient = new QueryClient();

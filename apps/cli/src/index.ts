@@ -17,7 +17,10 @@ import { registerOnboardCommands } from "./commands/onboard.js";
 import { registerPackageCommands } from "./commands/package.js";
 import { registerPluginCommands } from "./commands/plugin.js";
 import { registerRunCommands } from "./commands/run.js";
+import { registerSecretCommands } from "./commands/secret.js";
+import { registerSkillCommands } from "./commands/skill.js";
 import { registerTaskCommands } from "./commands/task.js";
+import { registerWorkspaceCommands } from "./commands/workspace.js";
 
 function resolveInvocationName(explicitName?: string) {
   if (explicitName) {
@@ -58,6 +61,9 @@ export function buildProgram(input: CliRuntimeInput = {}) {
   registerRunCommands(program, context);
   registerDbBackupCommands(program, context);
   registerCompanyCommands(program, context);
+  registerWorkspaceCommands(program, context);
+  registerSkillCommands(program, context);
+  registerSecretCommands(program, context);
   registerAgentCommands(program, context);
   registerTaskCommands(program, context);
   registerIssueCommands(program, context);
