@@ -48,3 +48,5 @@ Run a lightweight release smoke against a running instance:
 ```bash
 pnpm smoke:release:local
 ```
+
+If you also provide `PAPERAI_TOKEN` and `PAPERAI_COMPANY_ID`, the smoke run will additionally probe org, cost, skill, plugin, and workspace endpoints.

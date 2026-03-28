@@ -18,12 +18,14 @@ import {
   createIssueDocumentSchema,
   createIssueSchema,
   createInviteSchema,
+  createHumanJoinRequestSchema,
   createIssueWorkProductSchema,
   createPluginSchema,
   createProjectWorkspaceSchema,
   createProjectSchema,
   createRoutineSchema,
   createSecretSchema,
+  createAgentJoinRequestSchema,
   createTaskCommentSchema,
   createTaskSchema,
   importCompanyPackageSchema,
@@ -32,6 +34,7 @@ import {
   registerSchema,
   approveCliAuthChallengeSchema,
   resolveApprovalSchema,
+  resolveJoinRequestSchema,
   scanCompanySkillsSchema,
   triggerPluginJobSchema,
   triggerPluginWebhookSchema,
@@ -145,6 +148,13 @@ export const routes: FastifyPluginAsync = async (app) => {
     return svg;
   });
 
+  app.get("/api/v1/org-chart.png", { preHandler: app.authenticate }, async (request, reply) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    const png = await app.platformService.getOrgChartPng(request.user.sub, companyId);
+    reply.type("image/png");
+    return Buffer.from(png);
+  });
+
   app.get("/api/v1/companies/:companyId/invites", { preHandler: app.authenticate }, async (request) => {
     return await app.platformService.listInvites(request.user.sub, (request.params as { companyId: string }).companyId);
   });
@@ -152,6 +162,39 @@ export const routes: FastifyPluginAsync = async (app) => {
   app.post("/api/v1/companies/:companyId/invites", { preHandler: app.authenticate }, async (request) => {
     const payload = createInviteSchema.parse(request.body);
     return await app.platformService.createInvite(request.user.sub, (request.params as { companyId: string }).companyId, payload);
+  });
+
+  app.get("/api/v1/companies/:companyId/join-requests", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.listJoinRequests(
+      request.user.sub,
+      (request.params as { companyId: string }).companyId,
+    );
+  });
+
+  app.post("/api/v1/companies/:companyId/join-requests/human", { preHandler: app.authenticate }, async (request) => {
+    const payload = createHumanJoinRequestSchema.parse(request.body);
+    return await app.platformService.createHumanJoinRequest(
+      request.user.sub,
+      (request.params as { companyId: string }).companyId,
+      payload,
+    );
+  });
+
+  app.post("/api/v1/companies/:companyId/join-requests/agent", async (request) => {
+    const payload = createAgentJoinRequestSchema.parse(request.body);
+    return await app.platformService.createAgentJoinRequest(
+      (request.params as { companyId: string }).companyId,
+      payload,
+    );
+  });
+
+  app.post("/api/v1/join-requests/:joinRequestId/resolve", { preHandler: app.authenticate }, async (request) => {
+    const payload = resolveJoinRequestSchema.parse(request.body);
+    return await app.platformService.resolveJoinRequest(
+      request.user.sub,
+      (request.params as { joinRequestId: string }).joinRequestId,
+      payload,
+    );
   });
 
   app.get("/api/v1/goals", { preHandler: app.authenticate }, async (request) => {
@@ -503,6 +546,16 @@ export const routes: FastifyPluginAsync = async (app) => {
   app.get("/api/v1/costs/overview", { preHandler: app.authenticate }, async (request) => {
     const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
     return await app.platformService.getCostOverview(request.user.sub, companyId);
+  });
+
+  app.get("/api/v1/costs/finance-events", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listFinanceEvents(request.user.sub, companyId);
+  });
+
+  app.get("/api/v1/costs/quota-windows", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listQuotaWindows(request.user.sub, companyId);
   });
 
   app.get("/api/v1/activity", { preHandler: app.authenticate }, async (request) => {

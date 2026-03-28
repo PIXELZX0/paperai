@@ -51,6 +51,21 @@ papercli issue block --issue <issue-id>
 papercli approval resolve <approval-id> --status approved
 ```
 
+Operating extensions:
+
+```bash
+papercli company org
+papercli company cost-overview
+papercli company finance-events
+papercli company quota-windows
+papercli company join-requests
+papercli company resolve-join-request <join-request-id> --status approved
+papercli workspace create-project --project <project-id> --name main --primary
+papercli skill scan --root ~/.codex/skills
+papercli secret create --name OPENAI_API_KEY --value '...'
+papercli plugin health <plugin-id>
+```
+
 Configuration precedence is `flag > env > profile > default`. The CLI stores its local profile at
 `$XDG_CONFIG_HOME/papercli/config.json` or `~/.config/papercli/config.json`. The legacy `paperai`
 binary remains available as a compatibility alias for `papercli`.
@@ -58,6 +73,7 @@ binary remains available as a compatibility alias for `papercli`.
 ## CI/CD
 
 - CI runs `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` on pushes and pull requests.
+- Local operator checks are also available via `pnpm smoke:release:local`, `pnpm eval:operating`, and `pnpm test:e2e`.
 - Publishing a GitHub Release builds the production Docker image and pushes it to `yuchanshin/paperai`.
 - GitHub Releases push `latest` plus the release tag, and pushes to `main` publish `test-latest` plus a timestamped `test-YYYY-MM-DD-HH-MM-SS` tag.
 

@@ -13,6 +13,7 @@ import type {
   CompanyCostOverview,
   CompanySkill,
   ExecutionWorkspace,
+  FinanceEvent,
   Issue,
   IssueAttachment,
   IssueComment,
@@ -20,10 +21,13 @@ import type {
   IssueDocumentRevision,
   IssueDocumentSummary,
   IssueWorkProduct,
+  JoinRequest,
+  JoinRequestResolution,
   Plugin,
   PluginHealth,
   PluginRuntimeActionResult,
   ProjectWorkspace,
+  QuotaWindow,
   Secret,
   Task,
   TaskComment,
@@ -111,6 +115,31 @@ export class PaperAiApiClient {
 
   listCompanies() {
     return this.request<Company[]>("/companies");
+  }
+
+  listJoinRequests(companyId: string) {
+    return this.request<JoinRequest[]>(`/companies/${encodeURIComponent(companyId)}/join-requests`);
+  }
+
+  createHumanJoinRequest(companyId: string, payload: Record<string, unknown>) {
+    return this.request<JoinRequest>(`/companies/${encodeURIComponent(companyId)}/join-requests/human`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  createAgentJoinRequest(companyId: string, payload: Record<string, unknown>) {
+    return this.request<JoinRequest>(`/companies/${encodeURIComponent(companyId)}/join-requests/agent`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  resolveJoinRequest(joinRequestId: string, payload: Record<string, unknown>) {
+    return this.request<JoinRequestResolution>(`/join-requests/${encodeURIComponent(joinRequestId)}/resolve`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   }
 
   listAgents(companyId: string) {
@@ -497,6 +526,14 @@ export class PaperAiApiClient {
 
   getCostOverview(companyId: string) {
     return this.request<CompanyCostOverview>(`/costs/overview?companyId=${encodeURIComponent(companyId)}`);
+  }
+
+  listFinanceEvents(companyId: string) {
+    return this.request<FinanceEvent[]>(`/costs/finance-events?companyId=${encodeURIComponent(companyId)}`);
+  }
+
+  listQuotaWindows(companyId: string) {
+    return this.request<QuotaWindow[]>(`/costs/quota-windows?companyId=${encodeURIComponent(companyId)}`);
   }
 
   listPlugins(companyId: string) {

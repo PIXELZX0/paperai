@@ -7,6 +7,7 @@ import { hasBoardPermission } from "@paperai/core";
 import { parseCompanyPackage, exportCompanyPackage } from "@paperai/company-package";
 import { createDatabase, schema, type Database } from "@paperai/db";
 import { validatePluginManifest } from "@paperai/plugin-sdk";
+import { Resvg } from "@resvg/resvg-js";
 import type {
   ActivityEvent,
   Agent,
@@ -34,6 +35,7 @@ import type {
   CostSummaryByProject,
   CostSummaryByProvider,
   ExecutionWorkspace,
+  FinanceEvent,
   Goal,
   HeartbeatRun,
   IssueAttachment,
@@ -44,6 +46,9 @@ import type {
   IssueDocumentSummary,
   IssueWorkProduct,
   Invite,
+  JoinRequest,
+  JoinRequestAgentDraft,
+  JoinRequestResolution,
   Membership,
   MembershipRole,
   Plugin,
@@ -51,12 +56,14 @@ import type {
   PluginRuntimeActionResult,
   Project,
   ProjectWorkspace,
+  QuotaWindow,
   Routine,
   Secret,
   Task,
   TaskComment,
 } from "@paperai/shared";
 import { hashPassword, verifyPassword } from "../lib/passwords.js";
+import { executePluginRuntime, getPluginUiBridgeMount } from "../lib/plugin-runtime.js";
 
 function toIso(value: Date | null | undefined): string | null {
   return value ? value.toISOString() : null;
@@ -159,9 +166,35 @@ function mapInvite(row: typeof schema.invites.$inferSelect): Invite {
     role: row.role as Invite["role"],
     token: row.token,
     invitedByUserId: row.invitedByUserId,
+    onboardingTitle: row.onboardingTitle,
+    onboardingBody: row.onboardingBody,
+    manifest: row.manifest,
     acceptedAt: toIso(row.acceptedAt),
     expiresAt: row.expiresAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function mapJoinRequest(row: typeof schema.joinRequests.$inferSelect): JoinRequest {
+  return {
+    id: row.id,
+    companyId: row.companyId,
+    kind: row.kind as JoinRequest["kind"],
+    status: row.status as JoinRequest["status"],
+    requestedByUserId: row.requestedByUserId,
+    requestedByAgentId: row.requestedByAgentId,
+    email: row.email,
+    role: (row.role as MembershipRole | null) ?? null,
+    note: row.note,
+    onboardingTitle: row.onboardingTitle,
+    onboardingBody: row.onboardingBody,
+    manifest: row.manifest,
+    agentDraft: (row.agentDraft as JoinRequestAgentDraft | null) ?? null,
+    resolvedByUserId: row.resolvedByUserId,
+    resolvedAt: toIso(row.resolvedAt),
+    resolutionNotes: row.resolutionNotes,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
 
@@ -1161,7 +1194,17 @@ export class PlatformService {
       .filter((member): member is CompanyMember => Boolean(member));
   }
 
-  async createInvite(actorUserId: string, companyId: string, input: { email: string; role: MembershipRole }) {
+  async createInvite(
+    actorUserId: string,
+    companyId: string,
+    input: {
+      email: string;
+      role: MembershipRole;
+      onboardingTitle?: string;
+      onboardingBody?: string;
+      manifest?: Record<string, unknown>;
+    },
+  ) {
     await this.requirePermission(actorUserId, companyId, "membership:invite");
     const [invite] = await this.db
       .insert(schema.invites)
@@ -1171,6 +1214,9 @@ export class PlatformService {
         role: input.role,
         token: randomUUID(),
         invitedByUserId: actorUserId,
+        onboardingTitle: input.onboardingTitle,
+        onboardingBody: input.onboardingBody,
+        manifest: input.manifest ?? {},
         expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7),
       })
       .returning();
@@ -1195,6 +1241,245 @@ export class PlatformService {
       .where(eq(schema.invites.companyId, companyId))
       .orderBy(desc(schema.invites.createdAt));
     return rows.map(mapInvite);
+  }
+
+  async createHumanJoinRequest(
+    actorUserId: string,
+    companyId: string,
+    input: {
+      role?: MembershipRole;
+      note?: string;
+      onboardingTitle?: string;
+      onboardingBody?: string;
+      manifest?: Record<string, unknown>;
+    },
+  ): Promise<JoinRequest> {
+    const [company] = await this.db.select().from(schema.companies).where(eq(schema.companies.id, companyId));
+    if (!company) {
+      throw new Error("not_found");
+    }
+
+    const [user] = await this.db.select().from(schema.users).where(eq(schema.users.id, actorUserId));
+    if (!user) {
+      throw new Error("not_found");
+    }
+
+    const existingMembership = await this.getMembership(actorUserId, companyId);
+    if (existingMembership) {
+      throw new Error("already_member");
+    }
+
+    const [request] = await this.db
+      .insert(schema.joinRequests)
+      .values({
+        companyId,
+        kind: "human",
+        status: "pending",
+        requestedByUserId: actorUserId,
+        email: user.email,
+        role: input.role ?? "viewer",
+        note: input.note,
+        onboardingTitle: input.onboardingTitle,
+        onboardingBody: input.onboardingBody,
+        manifest: input.manifest ?? {},
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    await this.recordActivity({
+      companyId,
+      actorUserId,
+      kind: "join_request.created",
+      targetType: "join_request",
+      targetId: request.id,
+      summary: `${user.email} requested to join ${company.name}`,
+      payload: { kind: "human", requestedRole: request.role },
+    });
+
+    return mapJoinRequest(request);
+  }
+
+  async createAgentJoinRequest(
+    companyId: string,
+    input: {
+      slug: string;
+      name: string;
+      title?: string;
+      capabilities?: string;
+      adapterType: Agent["adapterType"];
+      adapterConfig?: Record<string, unknown>;
+      runtimeConfig?: Record<string, unknown>;
+      permissions?: string[];
+      budgetMonthlyCents: number;
+      note?: string;
+      onboardingTitle?: string;
+      onboardingBody?: string;
+      manifest?: Record<string, unknown>;
+    },
+  ): Promise<JoinRequest> {
+    const [company] = await this.db.select().from(schema.companies).where(eq(schema.companies.id, companyId));
+    if (!company) {
+      throw new Error("not_found");
+    }
+
+    const [request] = await this.db
+      .insert(schema.joinRequests)
+      .values({
+        companyId,
+        kind: "agent",
+        status: "pending",
+        note: input.note,
+        onboardingTitle: input.onboardingTitle,
+        onboardingBody: input.onboardingBody,
+        manifest: input.manifest ?? {},
+        agentDraft: {
+          slug: input.slug,
+          name: input.name,
+          title: input.title ?? null,
+          capabilities: input.capabilities ?? null,
+          adapterType: input.adapterType,
+          adapterConfig: input.adapterConfig ?? {},
+          runtimeConfig: input.runtimeConfig ?? {},
+          permissions: input.permissions ?? [],
+          budgetMonthlyCents: input.budgetMonthlyCents,
+        } satisfies JoinRequestAgentDraft,
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    await this.recordActivity({
+      companyId,
+      kind: "join_request.created",
+      targetType: "join_request",
+      targetId: request.id,
+      summary: `Agent candidate ${input.name} requested to join ${company.name}`,
+      payload: { kind: "agent", adapterType: input.adapterType, slug: input.slug },
+    });
+
+    return mapJoinRequest(request);
+  }
+
+  async listJoinRequests(actorUserId: string, companyId: string): Promise<JoinRequest[]> {
+    await this.requirePermission(actorUserId, companyId, "membership:update");
+    const rows = await this.db
+      .select()
+      .from(schema.joinRequests)
+      .where(eq(schema.joinRequests.companyId, companyId))
+      .orderBy(desc(schema.joinRequests.createdAt));
+    return rows.map(mapJoinRequest);
+  }
+
+  async resolveJoinRequest(
+    actorUserId: string,
+    joinRequestId: string,
+    input: { status: "approved" | "rejected" | "cancelled"; role?: MembershipRole; resolutionNotes?: string },
+  ): Promise<JoinRequestResolution> {
+    const [existing] = await this.db.select().from(schema.joinRequests).where(eq(schema.joinRequests.id, joinRequestId));
+    if (!existing) {
+      throw new Error("not_found");
+    }
+
+    await this.requirePermission(actorUserId, existing.companyId, "membership:update");
+    if (existing.status !== "pending") {
+      throw new Error("join_request_already_resolved");
+    }
+
+    let membership: Membership | null = null;
+    let agent: Agent | null = null;
+
+    if (input.status === "approved" && existing.kind === "human") {
+      if (!existing.requestedByUserId) {
+        throw new Error("invalid_join_request");
+      }
+      const role = (input.role ?? existing.role ?? "viewer") as MembershipRole;
+      const currentMembership = await this.getMembership(existing.requestedByUserId, existing.companyId);
+      if (!currentMembership) {
+        const [membershipRow] = await this.db
+          .insert(schema.memberships)
+          .values({
+            companyId: existing.companyId,
+            userId: existing.requestedByUserId,
+            role,
+          })
+          .returning();
+        membership = mapMembership(membershipRow);
+        await this.recordActivity({
+          companyId: existing.companyId,
+          actorUserId,
+          kind: "membership.created",
+          targetType: "membership",
+          targetId: membership.id,
+          summary: `Approved human join request as ${role}`,
+          payload: { joinRequestId, userId: existing.requestedByUserId },
+        });
+      } else {
+        membership = currentMembership;
+      }
+    }
+
+    if (input.status === "approved" && existing.kind === "agent") {
+      const agentDraft = (existing.agentDraft as JoinRequestAgentDraft | null) ?? null;
+      if (!agentDraft) {
+        throw new Error("invalid_join_request");
+      }
+      await this.resolveSecretReferencesForCompany(existing.companyId, agentDraft.adapterConfig ?? {});
+      await this.resolveSecretReferencesForCompany(existing.companyId, agentDraft.runtimeConfig ?? {});
+      const [agentRow] = await this.db
+        .insert(schema.agents)
+        .values({
+          companyId: existing.companyId,
+          slug: agentDraft.slug,
+          name: agentDraft.name,
+          title: agentDraft.title,
+          capabilities: agentDraft.capabilities,
+          adapterType: agentDraft.adapterType,
+          adapterConfig: agentDraft.adapterConfig ?? {},
+          runtimeConfig: agentDraft.runtimeConfig ?? {},
+          permissions: agentDraft.permissions ?? [],
+          budgetMonthlyCents: agentDraft.budgetMonthlyCents,
+          updatedAt: new Date(),
+        })
+        .returning();
+      agent = mapAgent(agentRow);
+      await this.recordActivity({
+        companyId: existing.companyId,
+        actorUserId,
+        kind: "agent.created",
+        targetType: "agent",
+        targetId: agent.id,
+        summary: `Approved agent join request for ${agent.name}`,
+        payload: { joinRequestId, slug: agent.slug },
+      });
+    }
+
+    const [resolved] = await this.db
+      .update(schema.joinRequests)
+      .set({
+        status: input.status,
+        role: input.role ?? existing.role,
+        resolvedByUserId: actorUserId,
+        resolvedAt: new Date(),
+        resolutionNotes: input.resolutionNotes ?? null,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.joinRequests.id, joinRequestId))
+      .returning();
+
+    await this.recordActivity({
+      companyId: existing.companyId,
+      actorUserId,
+      kind: "join_request.resolved",
+      targetType: "join_request",
+      targetId: joinRequestId,
+      summary: `Resolved ${existing.kind} join request as ${input.status}`,
+      payload: { role: input.role ?? existing.role ?? null, resolutionNotes: input.resolutionNotes ?? null },
+    });
+
+    return {
+      joinRequest: mapJoinRequest(resolved),
+      membership,
+      agent,
+    };
   }
 
   async createGoal(
@@ -2032,8 +2317,8 @@ export class PlatformService {
     },
   ) {
     await this.requirePermission(actorUserId, companyId, "agent:write");
-    const adapterConfig = await this.resolveSecretReferencesForCompany(companyId, input.adapterConfig ?? {});
-    const runtimeConfig = await this.resolveSecretReferencesForCompany(companyId, input.runtimeConfig ?? {});
+    await this.resolveSecretReferencesForCompany(companyId, input.adapterConfig ?? {});
+    await this.resolveSecretReferencesForCompany(companyId, input.runtimeConfig ?? {});
     const [agent] = await this.db
       .insert(schema.agents)
       .values({
@@ -2044,8 +2329,8 @@ export class PlatformService {
         title: input.title,
         capabilities: input.capabilities,
         adapterType: input.adapterType,
-        adapterConfig,
-        runtimeConfig,
+        adapterConfig: input.adapterConfig ?? {},
+        runtimeConfig: input.runtimeConfig ?? {},
         permissions: input.permissions ?? [],
         budgetMonthlyCents: input.budgetMonthlyCents,
         updatedAt: new Date(),
@@ -2145,6 +2430,17 @@ export class PlatformService {
       cards,
       `</svg>`,
     ].join("");
+  }
+
+  async getOrgChartPng(actorUserId: string, companyId: string): Promise<Uint8Array> {
+    const svg = await this.getOrgChartSvg(actorUserId, companyId);
+    const image = new Resvg(svg, {
+      fitTo: {
+        mode: "width",
+        value: 1440,
+      },
+    }).render();
+    return image.asPng();
   }
 
   async getAgent(agentId: string): Promise<Agent | null> {
@@ -2721,6 +3017,125 @@ export class PlatformService {
     };
   }
 
+  async listFinanceEvents(actorUserId: string, companyId: string): Promise<FinanceEvent[]> {
+    await this.requirePermission(actorUserId, companyId, "cost:read");
+
+    const [costs, heartbeats, tasks] = await Promise.all([
+      this.db.select().from(schema.costEvents).where(eq(schema.costEvents.companyId, companyId)).orderBy(desc(schema.costEvents.createdAt)),
+      this.db.select().from(schema.heartbeatRuns).where(eq(schema.heartbeatRuns.companyId, companyId)),
+      this.db.select().from(schema.tasks).where(eq(schema.tasks.companyId, companyId)),
+    ]);
+
+    const heartbeatById = new Map(heartbeats.map((heartbeat) => [heartbeat.id, heartbeat]));
+    const taskById = new Map(tasks.map((task) => [task.id, task]));
+
+    return costs.map((cost) => {
+      const heartbeat = cost.heartbeatRunId ? heartbeatById.get(cost.heartbeatRunId) : undefined;
+      const task = heartbeat?.taskId ? taskById.get(heartbeat.taskId) : undefined;
+      return {
+        id: cost.id,
+        companyId: cost.companyId,
+        agentId: cost.agentId,
+        heartbeatRunId: cost.heartbeatRunId,
+        projectId: task?.projectId ?? null,
+        amountCents: cost.amountCents,
+        currency: cost.currency,
+        biller: cost.biller,
+        provider: cost.provider,
+        model: cost.model,
+        direction: cost.direction as FinanceEvent["direction"],
+        category: cost.direction === "credit" ? "credit" : "usage_cost",
+        metadata: {
+          taskId: task?.id ?? null,
+          issueId: task?.id ?? null,
+          heartbeatStatus: heartbeat?.status ?? null,
+        },
+        createdAt: cost.createdAt.toISOString(),
+      } satisfies FinanceEvent;
+    });
+  }
+
+  async listQuotaWindows(actorUserId: string, companyId: string): Promise<QuotaWindow[]> {
+    await this.requirePermission(actorUserId, companyId, "cost:read");
+
+    const [companyRow, budgets, agents, costs] = await Promise.all([
+      this.db.select().from(schema.companies).where(eq(schema.companies.id, companyId)),
+      this.db.select().from(schema.budgetPolicies).where(eq(schema.budgetPolicies.companyId, companyId)),
+      this.db.select().from(schema.agents).where(eq(schema.agents.companyId, companyId)),
+      this.db.select().from(schema.costEvents).where(eq(schema.costEvents.companyId, companyId)),
+    ]);
+
+    if (!companyRow[0]) {
+      throw new Error("not_found");
+    }
+
+    const company = companyRow[0];
+    const now = new Date();
+    const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const periodEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const periodCosts = costs.filter((cost) => cost.createdAt >= periodStart && cost.createdAt < periodEnd);
+    const signedCost = (amountCents: number, direction: "debit" | "credit") => (direction === "credit" ? -amountCents : amountCents);
+    const companySpend = periodCosts.reduce(
+      (sum, cost) => sum + signedCost(cost.amountCents, cost.direction as FinanceEvent["direction"]),
+      0,
+    );
+    const spendByAgent = new Map<string, number>();
+    for (const cost of periodCosts) {
+      if (!cost.agentId) {
+        continue;
+      }
+      spendByAgent.set(
+        cost.agentId,
+        (spendByAgent.get(cost.agentId) ?? 0) + signedCost(cost.amountCents, cost.direction as FinanceEvent["direction"]),
+      );
+    }
+
+    const windows: QuotaWindow[] = [];
+    const companyBudget = budgets.find((budget) => budget.scope === "company" && budget.agentId === null);
+    const companyLimit = companyBudget?.monthlyLimitCents ?? company.monthlyBudgetCents;
+    const companyRemaining = companyLimit - companySpend;
+    const companyRatio = companyLimit > 0 ? companySpend / companyLimit : 0;
+    windows.push({
+      id: `company:${company.id}:${periodStart.toISOString()}`,
+      companyId,
+      scope: "company",
+      scopeRef: null,
+      periodStart: periodStart.toISOString(),
+      periodEnd: periodEnd.toISOString(),
+      limitCents: companyLimit,
+      spentCents: companySpend,
+      remainingCents: companyRemaining,
+      hardStop: companyBudget?.hardStop ?? true,
+      status: companyRemaining < 0 ? "exceeded" : companyRatio >= 0.8 ? "warning" : "ok",
+    });
+
+    for (const agent of agents) {
+      const budget = budgets.find((entry) => entry.scope === "agent" && entry.agentId === agent.id);
+      const limit = budget?.monthlyLimitCents ?? agent.budgetMonthlyCents;
+      const spent = spendByAgent.get(agent.id) ?? 0;
+      if (!limit && !spent) {
+        continue;
+      }
+      const remaining = limit - spent;
+      const ratio = limit > 0 ? spent / limit : 0;
+      windows.push({
+        id: `agent:${agent.id}:${periodStart.toISOString()}`,
+        companyId,
+        scope: "agent",
+        scopeRef: agent.id,
+        periodStart: periodStart.toISOString(),
+        periodEnd: periodEnd.toISOString(),
+        limitCents: limit,
+        spentCents: spent,
+        remainingCents: remaining,
+        hardStop: budget?.hardStop ?? true,
+        status: remaining < 0 ? "exceeded" : ratio >= 0.8 ? "warning" : "ok",
+      });
+    }
+
+    return windows;
+  }
+
   async listActivity(actorUserId: string, companyId: string): Promise<ActivityEvent[]> {
     await this.requirePermission(actorUserId, companyId, "audit:read");
     const rows = await this.db
@@ -2758,7 +3173,7 @@ export class PlatformService {
   async createPlugin(actorUserId: string, companyId: string, input: { slug: string; name: string; manifest: Record<string, unknown>; config: Record<string, unknown> }) {
     await this.requirePermission(actorUserId, companyId, "plugin:write");
     const manifest = validatePluginManifest(input.manifest);
-    const config = await this.resolveSecretReferencesForCompany(companyId, input.config);
+    await this.resolveSecretReferencesForCompany(companyId, input.config);
     const [row] = await this.db
       .insert(schema.plugins)
       .values({
@@ -2767,7 +3182,7 @@ export class PlatformService {
         name: input.name,
         status: "active",
         manifest: manifest as unknown as Record<string, unknown>,
-        config,
+        config: input.config,
         updatedAt: new Date(),
       })
       .returning();
@@ -2821,12 +3236,12 @@ export class PlatformService {
     }
     await this.requirePermission(actorUserId, plugin.companyId, "plugin:write");
     const manifest = validatePluginManifest(input.manifest);
-    const config = await this.resolveSecretReferencesForCompany(plugin.companyId, input.config);
+    await this.resolveSecretReferencesForCompany(plugin.companyId, input.config);
     const [row] = await this.db
       .update(schema.plugins)
       .set({
         manifest: manifest as unknown as Record<string, unknown>,
-        config,
+        config: input.config,
         updatedAt: new Date(),
       })
       .where(eq(schema.plugins.id, pluginId))
@@ -2841,14 +3256,27 @@ export class PlatformService {
     }
     await this.requirePermission(actorUserId, plugin.companyId, "audit:read");
     const manifest = plugin.manifest as unknown as Plugin["manifest"];
+    const mappedPlugin = mapPlugin(plugin);
+    const resolvedConfig = await this.resolveSecretReferencesForCompany(plugin.companyId, mappedPlugin.config);
+
+    const runtime = plugin.status === "disabled"
+      ? {
+          ok: false,
+          result: { message: "Plugin is disabled." },
+        }
+      : await executePluginRuntime(mappedPlugin, resolvedConfig, "health", undefined, {});
 
     return {
       pluginId: plugin.id,
-      status: plugin.status === "disabled" ? "disabled" : "healthy",
+      status: plugin.status === "disabled" ? "disabled" : runtime.ok ? "healthy" : "degraded",
       message:
         plugin.status === "disabled"
           ? "Plugin is disabled."
-          : `Plugin ${plugin.name} is installed with ${manifest.capabilities.length} capabilities.`,
+          : runtime.ok
+            ? `Plugin ${plugin.name} is healthy and exposes ${manifest.capabilities.length} capabilities.`
+            : String(
+                (runtime.result as { message?: unknown }).message ?? `Plugin ${plugin.name} runtime check failed.`,
+              ),
       checkedAt: new Date().toISOString(),
       capabilities: manifest.capabilities,
     };
@@ -2861,12 +3289,14 @@ export class PlatformService {
     }
     await this.requirePermission(actorUserId, row.companyId, "audit:read");
     const plugin = mapPlugin(row);
+    const resolvedConfig = await this.resolveSecretReferencesForCompany(row.companyId, plugin.config);
     return {
       pluginId: plugin.id,
       slug: plugin.slug,
       name: plugin.name,
       status: plugin.status,
       slots: plugin.manifest.ui ?? [],
+      mountUrl: getPluginUiBridgeMount(plugin, resolvedConfig),
     };
   }
 
@@ -2874,13 +3304,14 @@ export class PlatformService {
     plugin: Plugin,
     kind: PluginRuntimeActionResult["kind"],
     key: string,
+    ok: boolean,
     result: Record<string, unknown>,
   ): PluginRuntimeActionResult {
     return {
       pluginId: plugin.id,
       kind,
       key,
-      ok: plugin.status === "active",
+      ok,
       at: new Date().toISOString(),
       result,
     };
@@ -2902,7 +3333,13 @@ export class PlatformService {
     if (!tool) {
       throw new Error("plugin_tool_not_found");
     }
-    return this.buildPluginActionResult(plugin, "tool", toolName, { input, description: tool.description });
+    const resolvedConfig = await this.resolveSecretReferencesForCompany(row.companyId, plugin.config);
+    const runtime = await executePluginRuntime(plugin, resolvedConfig, "tool", toolName, input);
+    return this.buildPluginActionResult(plugin, "tool", toolName, runtime.ok && plugin.status === "active", {
+      ...runtime.result,
+      input,
+      description: tool.description,
+    });
   }
 
   async triggerPluginJob(
@@ -2921,7 +3358,13 @@ export class PlatformService {
     if (!job) {
       throw new Error("plugin_job_not_found");
     }
-    return this.buildPluginActionResult(plugin, "job", jobKey, { input, schedule: job.schedule });
+    const resolvedConfig = await this.resolveSecretReferencesForCompany(row.companyId, plugin.config);
+    const runtime = await executePluginRuntime(plugin, resolvedConfig, "job", jobKey, input);
+    return this.buildPluginActionResult(plugin, "job", jobKey, runtime.ok && plugin.status === "active", {
+      ...runtime.result,
+      input,
+      schedule: job.schedule,
+    });
   }
 
   async triggerPluginWebhook(
@@ -2940,7 +3383,13 @@ export class PlatformService {
     if (!webhook) {
       throw new Error("plugin_webhook_not_found");
     }
-    return this.buildPluginActionResult(plugin, "webhook", webhookKey, { payload, description: webhook.description ?? null });
+    const resolvedConfig = await this.resolveSecretReferencesForCompany(row.companyId, plugin.config);
+    const runtime = await executePluginRuntime(plugin, resolvedConfig, "webhook", webhookKey, payload);
+    return this.buildPluginActionResult(plugin, "webhook", webhookKey, runtime.ok && plugin.status === "active", {
+      ...runtime.result,
+      payload,
+      description: webhook.description ?? null,
+    });
   }
 
   async importCompanyPackage(actorUserId: string, companyId: string, root: string): Promise<CompanyPackageManifest> {

@@ -8,6 +8,7 @@ import type {
   CompanySkill,
   CostEvent,
   ExecutionWorkspace,
+  FinanceEvent,
   Goal,
   HeartbeatRun,
   Issue,
@@ -18,11 +19,14 @@ import type {
   IssueDocumentSummary,
   IssueWorkProduct,
   Invite,
+  JoinRequest,
+  JoinRequestResolution,
   Plugin,
   PluginHealth,
   PluginRuntimeActionResult,
   Project,
   ProjectWorkspace,
+  QuotaWindow,
   Routine,
   Secret,
   Task,
@@ -101,6 +105,23 @@ export const api = {
   invites: (token: string, companyId: string) => apiRequest<Invite[]>(`/companies/${companyId}/invites`, token),
   createInvite: (token: string, companyId: string, payload: Record<string, unknown>) =>
     apiRequest<Invite>(`/companies/${companyId}/invites`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  joinRequests: (token: string, companyId: string) =>
+    apiRequest<JoinRequest[]>(`/companies/${companyId}/join-requests`, token),
+  createHumanJoinRequest: (token: string, companyId: string, payload: Record<string, unknown>) =>
+    apiRequest<JoinRequest>(`/companies/${companyId}/join-requests/human`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  createAgentJoinRequest: (token: string, companyId: string, payload: Record<string, unknown>) =>
+    apiRequest<JoinRequest>(`/companies/${companyId}/join-requests/agent`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  resolveJoinRequest: (token: string, joinRequestId: string, payload: Record<string, unknown>) =>
+    apiRequest<JoinRequestResolution>(`/join-requests/${joinRequestId}/resolve`, token, {
       method: "POST",
       body: JSON.stringify(payload),
     }),
@@ -214,6 +235,10 @@ export const api = {
   costs: (token: string, companyId: string) => apiRequest<CostEvent[]>(`/costs?companyId=${companyId}`, token),
   costOverview: (token: string, companyId: string) =>
     apiRequest<CompanyCostOverview>(`/costs/overview?companyId=${companyId}`, token),
+  financeEvents: (token: string, companyId: string) =>
+    apiRequest<FinanceEvent[]>(`/costs/finance-events?companyId=${companyId}`, token),
+  quotaWindows: (token: string, companyId: string) =>
+    apiRequest<QuotaWindow[]>(`/costs/quota-windows?companyId=${companyId}`, token),
   activity: (token: string, companyId: string) => apiRequest<ActivityEvent[]>(`/activity?companyId=${companyId}`, token),
   orgTree: (token: string, companyId: string) => apiRequest(`/org-tree?companyId=${companyId}`, token),
   plugins: (token: string, companyId: string) => apiRequest<Plugin[]>(`/plugins?companyId=${companyId}`, token),

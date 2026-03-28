@@ -44,12 +44,32 @@ This document covers the first operating-control-plane endpoints added in the Pa
   - Returns the company org hierarchy rooted at top-level agents.
 - `GET /api/v1/org-chart.svg`
   - Returns an SVG export of the same org hierarchy.
+- `GET /api/v1/org-chart.png`
+  - Returns a PNG export of the same org hierarchy.
 - `GET /api/v1/costs/overview`
   - Returns aggregated spend by agent, project, provider, and biller.
+- `GET /api/v1/costs/finance-events`
+  - Returns normalized finance events derived from cost usage.
+- `GET /api/v1/costs/quota-windows`
+  - Returns current monthly quota windows for the company and agents.
 - `GET /api/v1/project-workspaces`
 - `POST /api/v1/project-workspaces`
 - `GET /api/v1/execution-workspaces`
 - `POST /api/v1/execution-workspaces`
+
+## Invites / Join Requests
+
+- `GET /api/v1/companies/:companyId/invites`
+- `POST /api/v1/companies/:companyId/invites`
+  - Invite payloads can now include `onboardingTitle`, `onboardingBody`, and `manifest`.
+- `GET /api/v1/companies/:companyId/join-requests`
+  - Returns pending and resolved human or agent join requests.
+- `POST /api/v1/companies/:companyId/join-requests/human`
+  - Requires user auth and creates a human join request for the authenticated user.
+- `POST /api/v1/companies/:companyId/join-requests/agent`
+  - Public endpoint for agent self-join requests. Carries an agent draft plus onboarding metadata.
+- `POST /api/v1/join-requests/:joinRequestId/resolve`
+  - Requires board auth and approves or rejects a join request. Human approvals create memberships; agent approvals create agents.
 
 ## Company Skills / Secrets
 
@@ -83,6 +103,20 @@ This document covers the first operating-control-plane endpoints added in the Pa
 - `POST /api/v1/plugins/:pluginId/jobs/trigger`
 - `POST /api/v1/plugins/:pluginId/webhooks/trigger`
 - `GET /api/v1/plugins/:pluginId/ui`
+  - Returns UI bridge slots and a resolved mount URL when the runtime exposes one.
+
+### Plugin runtime config
+
+Plugin runtime actions support two config modes:
+
+- HTTP transport
+  - Example: `{ "baseUrl": "http://127.0.0.1:4444", "headers": { "x-plugin-token": "..." } }`
+  - Tool, job, and webhook calls are POSTed to `/tools/:name`, `/jobs/:key`, and `/webhooks/:key`.
+  - Health checks call `GET /health`.
+- Command transport
+  - Example: `{ "transport": "command", "command": "node", "args": ["plugin-runner.mjs"] }`
+  - The runtime action payload is passed to stdin as JSON.
+  - `PAPERAI_PLUGIN_KIND` and `PAPERAI_PLUGIN_KEY` are also injected into the child environment.
 
 ## Compatibility
 

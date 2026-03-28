@@ -12,11 +12,14 @@ import {
   type CompanyCostOverview,
   type CompanySkill,
   type ExecutionWorkspace,
+  type FinanceEvent,
   type Issue,
   type IssueDocumentSummary,
+  type JoinRequest,
   type Plugin,
   type PluginRuntimeActionResult,
   type ProjectWorkspace,
+  type QuotaWindow,
 } from "@paperai/shared";
 import { useNavigate, useParams } from "react-router-dom";
 import { InlineForm } from "../components/forms.js";
@@ -69,6 +72,7 @@ const STATUS_TONES: Record<string, string> = {
   active: "bg-emerald-300/20 text-emerald-200",
   achieved: "bg-lime-300/20 text-lime-200",
   archived: "bg-zinc-400/15 text-zinc-300",
+  approved: "bg-emerald-300/20 text-emerald-200",
   backlog: "bg-zinc-300/15 text-zinc-200",
   blocked: "bg-rose-300/20 text-rose-200",
   cancelled: "bg-zinc-400/15 text-zinc-300",
@@ -83,9 +87,11 @@ const STATUS_TONES: Record<string, string> = {
   paused: "bg-amber-300/20 text-amber-100",
   pending: "bg-cyan-300/20 text-cyan-100",
   planned: "bg-violet-300/20 text-violet-100",
+  rejected: "bg-rose-300/20 text-rose-200",
   running: "bg-cyan-300/20 text-cyan-100",
   todo: "bg-cyan-300/20 text-cyan-100",
   viewer: "bg-zinc-300/15 text-zinc-200",
+  warning: "bg-amber-300/20 text-amber-100",
 };
 
 function useSession() {
@@ -207,6 +213,12 @@ export function DashboardPage() {
     enabled: hasCompany,
   });
 
+  const joinRequests = useQuery({
+    queryKey: ["join-requests", companyId],
+    queryFn: () => api.joinRequests(session.token!, companyId),
+    enabled: hasCompany,
+  });
+
   const activity = useQuery({
     queryKey: ["activity", companyId],
     queryFn: () => api.activity(session.token!, companyId),
@@ -258,6 +270,18 @@ export function DashboardPage() {
   const costOverview = useQuery({
     queryKey: ["cost-overview", companyId],
     queryFn: () => api.costOverview(session.token!, companyId),
+    enabled: hasCompany,
+  });
+
+  const financeEvents = useQuery({
+    queryKey: ["finance-events", companyId],
+    queryFn: () => api.financeEvents(session.token!, companyId),
+    enabled: hasCompany,
+  });
+
+  const quotaWindows = useQuery({
+    queryKey: ["quota-windows", companyId],
+    queryFn: () => api.quotaWindows(session.token!, companyId),
     enabled: hasCompany,
   });
 
@@ -371,6 +395,10 @@ export function DashboardPage() {
   const spent = useMemo(() => costs.data?.reduce((sum, item) => sum + item.amountCents, 0) ?? 0, [costs.data]);
   const activeProjects = useMemo(() => (projects.data ?? []).filter((project) => !project.archivedAt), [projects.data]);
   const pendingInvites = useMemo(() => (invites.data ?? []).filter((invite) => !invite.acceptedAt), [invites.data]);
+  const pendingJoinRequests = useMemo(
+    () => (joinRequests.data ?? []).filter((joinRequest) => joinRequest.status === "pending"),
+    [joinRequests.data],
+  );
   const activeLiveEvents = useMemo(
     () =>
       events.filter((event) => {
@@ -436,6 +464,7 @@ export function DashboardPage() {
     await queryClient.invalidateQueries({ queryKey: ["companies", session.token] });
     await queryClient.invalidateQueries({ queryKey: ["company-members", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["company-invites", companyId] });
+    await queryClient.invalidateQueries({ queryKey: ["join-requests", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["activity", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["goals", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["projects", companyId] });
@@ -445,6 +474,8 @@ export function DashboardPage() {
     await queryClient.invalidateQueries({ queryKey: ["heartbeats", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["costs", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["cost-overview", companyId] });
+    await queryClient.invalidateQueries({ queryKey: ["finance-events", companyId] });
+    await queryClient.invalidateQueries({ queryKey: ["quota-windows", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["org-tree", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["skills", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["secrets", companyId] });
@@ -488,6 +519,23 @@ export function DashboardPage() {
       api.createInvite(session.token!, companyId, {
         email: values.email,
         role: values.role || "viewer",
+      }),
+    onSuccess: invalidateCompanyData,
+  });
+
+  const resolveJoinRequest = useMutation({
+    mutationFn: ({
+      joinRequestId,
+      status,
+      role,
+    }: {
+      joinRequestId: string;
+      status: "approved" | "rejected" | "cancelled";
+      role?: string;
+    }) =>
+      api.resolveJoinRequest(session.token!, joinRequestId, {
+        status,
+        role: role || undefined,
       }),
     onSuccess: invalidateCompanyData,
   });
@@ -717,18 +765,17 @@ export function DashboardPage() {
     },
   });
 
-  async function downloadOrgChart() {
-    const response = await fetch(`${API_BASE}/org-chart.svg?companyId=${encodeURIComponent(companyId)}`, {
+  async function downloadOrgChart(format: "svg" | "png") {
+    const response = await fetch(`${API_BASE}/org-chart.${format}?companyId=${encodeURIComponent(companyId)}`, {
       headers: {
         authorization: `Bearer ${session.token}`,
       },
     });
-    const text = await response.text();
-    const blob = new Blob([text], { type: "image/svg+xml" });
+    const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${selectedCompany?.slug ?? "company"}-org-chart.svg`;
+    link.download = `${selectedCompany?.slug ?? "company"}-org-chart.${format}`;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -912,7 +959,9 @@ export function DashboardPage() {
                     companySettingsInitialValues={companySettingsInitialValues}
                     members={members.data ?? []}
                     invites={invites.data ?? []}
+                    joinRequests={joinRequests.data ?? []}
                     pendingInvites={pendingInvites.length}
+                    pendingJoinRequests={pendingJoinRequests.length}
                     activity={activity.data ?? []}
                     goals={goals.data ?? []}
                     projects={activeProjects}
@@ -944,6 +993,9 @@ export function DashboardPage() {
                     onCreateInvite={async (values) => {
                       await createInvite.mutateAsync(values);
                     }}
+                    onResolveJoinRequest={async (joinRequestId, status, role) => {
+                      await resolveJoinRequest.mutateAsync({ joinRequestId, status, role });
+                    }}
                     onCreateGoal={async (values) => {
                       await createGoal.mutateAsync(values);
                     }}
@@ -964,9 +1016,14 @@ export function DashboardPage() {
                     <Panel
                       title="Org tree"
                       actions={
-                        <button className="rounded-full bg-cyan-300 px-3 py-1 text-xs font-medium text-zinc-950" onClick={() => void downloadOrgChart()}>
-                          Export SVG
-                        </button>
+                        <div className="flex gap-2">
+                          <button className="rounded-full bg-cyan-300 px-3 py-1 text-xs font-medium text-zinc-950" onClick={() => void downloadOrgChart("svg")}>
+                            Export SVG
+                          </button>
+                          <button className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white" onClick={() => void downloadOrgChart("png")}>
+                            Export PNG
+                          </button>
+                        </div>
                       }
                     >
                       {!orgTree.data || orgTree.data.agents.length === 0 ? (
@@ -1000,6 +1057,8 @@ export function DashboardPage() {
                 {section === "costs" ? (
                   <CostSection
                     overview={costOverview.data}
+                    financeEvents={financeEvents.data ?? []}
+                    quotaWindows={quotaWindows.data ?? []}
                     agents={agents.data ?? []}
                     projects={projects.data ?? []}
                   />
@@ -1138,7 +1197,9 @@ function OverviewSection(props: {
   companySettingsInitialValues?: Record<string, string>;
   members: Array<{ id: string; role: string; createdAt: string; user: { name: string; email: string } }>;
   invites: Array<{ id: string; email: string; role: string; token: string; acceptedAt: string | null; expiresAt: string; createdAt: string }>;
+  joinRequests: JoinRequest[];
   pendingInvites: number;
+  pendingJoinRequests: number;
   activity: ActivityEvent[];
   goals: Array<{ id: string; title: string; description: string | null; level: string; status: string; parentId: string | null; createdAt: string }>;
   projects: Array<{ id: string; name: string; description: string | null; status: string; slug: string; goalId: string | null; targetDate: string | null; color: string | null; createdAt: string }>;
@@ -1158,6 +1219,7 @@ function OverviewSection(props: {
   onApprove(approvalId: string, status: "approved" | "rejected"): Promise<unknown>;
   onUpdateCompany(values: Record<string, string>): Promise<void>;
   onCreateInvite(values: Record<string, string>): Promise<void>;
+  onResolveJoinRequest(joinRequestId: string, status: "approved" | "rejected", role?: string): Promise<unknown>;
   onCreateGoal(values: Record<string, string>): Promise<void>;
   onCreateProject(values: Record<string, string>): Promise<void>;
   onCreateIssue(values: Record<string, string>): Promise<void>;
@@ -1277,6 +1339,61 @@ function OverviewSection(props: {
                     </div>
                     <div className="text-xs text-zinc-500">{formatDateTime(event.createdAt)}</div>
                   </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </Panel>
+
+        <Panel title="Join requests">
+          {props.joinRequests.length === 0 ? (
+            <EmptyState message="No join requests are waiting for board review." />
+          ) : (
+            <div className="grid gap-3">
+              {props.joinRequests.slice(0, 6).map((joinRequest) => (
+                <article key={joinRequest.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="space-y-2">
+                      <h3 className="font-medium text-white">
+                        {joinRequest.kind === "human"
+                          ? joinRequest.email ?? "Human join request"
+                          : joinRequest.agentDraft?.name ?? "Agent join request"}
+                      </h3>
+                      <div className="flex flex-wrap gap-2">
+                        <Badge label={joinRequest.kind} tone="bg-cyan-300/15 text-cyan-100" />
+                        <Badge label={joinRequest.status} tone={STATUS_TONES[joinRequest.status] ?? "bg-white/10 text-zinc-200"} />
+                        {joinRequest.role ? <Badge label={joinRequest.role} tone="bg-white/10 text-zinc-200" /> : null}
+                        {joinRequest.kind === "agent" && joinRequest.agentDraft?.adapterType ? (
+                          <Badge label={joinRequest.agentDraft.adapterType} tone="bg-amber-300/15 text-amber-100" />
+                        ) : null}
+                      </div>
+                      {joinRequest.note ? <p className="text-sm text-zinc-400">{joinRequest.note}</p> : null}
+                    </div>
+                    <div className="text-right text-xs text-zinc-500">
+                      <div>Created {formatDate(joinRequest.createdAt)}</div>
+                      {joinRequest.resolvedAt ? <div>Resolved {formatDate(joinRequest.resolvedAt)}</div> : null}
+                    </div>
+                  </div>
+                  {joinRequest.status === "pending" ? (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        className="rounded-full bg-emerald-300 px-3 py-1 text-xs font-medium text-zinc-950"
+                        onClick={() => {
+                          void props.onResolveJoinRequest(joinRequest.id, "approved", joinRequest.role ?? undefined);
+                        }}
+                      >
+                        Approve
+                      </button>
+                      <button
+                        className="rounded-full bg-rose-300 px-3 py-1 text-xs font-medium text-zinc-950"
+                        onClick={() => {
+                          void props.onResolveJoinRequest(joinRequest.id, "rejected");
+                        }}
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  ) : null}
                 </article>
               ))}
             </div>
@@ -1565,6 +1682,7 @@ function OverviewSection(props: {
               </div>
               <div className="grid gap-3 text-sm text-zinc-300">
                 <InfoCard title="Pending invites" value={props.pendingInvites} detail="Approval and join pressure on the workspace." />
+                <InfoCard title="Join requests" value={props.pendingJoinRequests} detail="Humans and agents waiting for board approval." />
                 <InfoCard title="Plugins installed" value={props.plugins.length} detail="Installed runtime extensions and tools." />
                 <InfoCard title="Routines configured" value={props.routines.length} detail="Scheduled automations defined for this company." />
               </div>
@@ -1576,7 +1694,13 @@ function OverviewSection(props: {
   );
 }
 
-function CostSection(props: { overview: CompanyCostOverview | undefined; agents: Array<{ id: string; name: string }>; projects: Array<{ id: string; name: string }> }) {
+function CostSection(props: {
+  overview: CompanyCostOverview | undefined;
+  financeEvents: FinanceEvent[];
+  quotaWindows: QuotaWindow[];
+  agents: Array<{ id: string; name: string }>;
+  projects: Array<{ id: string; name: string }>;
+}) {
   const agentById = useMemo(() => new Map(props.agents.map((agent) => [agent.id, agent.name])), [props.agents]);
   const projectById = useMemo(() => new Map(props.projects.map((project) => [project.id, project.name])), [props.projects]);
 
@@ -1640,6 +1764,58 @@ function CostSection(props: { overview: CompanyCostOverview | undefined; agents:
             <div className="grid gap-3">
               {props.overview.byBiller.map((item) => (
                 <SpendRow key={item.biller} label={item.biller} amountCents={item.amountCents} />
+              ))}
+            </div>
+          )}
+        </Panel>
+        <Panel title="Quota windows">
+          {props.quotaWindows.length === 0 ? (
+            <EmptyState message="No quota windows are active yet." />
+          ) : (
+            <div className="grid gap-3">
+              {props.quotaWindows.map((window) => (
+                <article key={window.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-medium text-white">
+                        {window.scope === "company" ? "Company budget window" : agentById.get(window.scopeRef ?? "") ?? window.scopeRef}
+                      </h3>
+                      <p className="text-sm text-zinc-400">
+                        {formatDate(window.periodStart)} to {formatDate(window.periodEnd)}
+                      </p>
+                    </div>
+                    <Badge label={window.status} tone={STATUS_TONES[window.status] ?? "bg-white/10 text-zinc-200"} />
+                  </div>
+                  <div className="mt-3 grid gap-2 text-sm text-zinc-300">
+                    <div>Limit {formatCurrency(window.limitCents)}</div>
+                    <div>Spent {formatCurrency(window.spentCents)}</div>
+                    <div>Remaining {formatCurrency(window.remainingCents)}</div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </Panel>
+        <Panel title="Finance events">
+          {props.financeEvents.length === 0 ? (
+            <EmptyState message="No finance events have been derived from cost usage yet." />
+          ) : (
+            <div className="grid gap-3">
+              {props.financeEvents.slice(0, 8).map((event) => (
+                <article key={event.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-medium text-white">{event.provider}</h3>
+                      <p className="text-sm text-zinc-400">
+                        {event.projectId ? projectById.get(event.projectId) ?? event.projectId : "Unassigned"} · {event.biller}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-medium text-white">{formatCurrency(event.direction === "credit" ? -event.amountCents : event.amountCents)}</div>
+                      <div className="text-xs text-zinc-500">{formatDateTime(event.createdAt)}</div>
+                    </div>
+                  </div>
+                </article>
               ))}
             </div>
           )}

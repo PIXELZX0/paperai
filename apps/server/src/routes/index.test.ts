@@ -31,9 +31,17 @@ function createPlatformServiceStub() {
     getAgentForActor: vi.fn(),
     getAgentRuntimeState: vi.fn(),
     getOrgTree: vi.fn(),
+    getOrgChartPng: vi.fn(),
     getCostOverview: vi.fn(),
+    listFinanceEvents: vi.fn(),
+    listQuotaWindows: vi.fn(),
+    listJoinRequests: vi.fn(),
+    createHumanJoinRequest: vi.fn(),
+    createAgentJoinRequest: vi.fn(),
+    resolveJoinRequest: vi.fn(),
     createProjectWorkspace: vi.fn(),
     setPluginStatus: vi.fn(),
+    getPluginUiBridge: vi.fn(),
     pauseAgent: vi.fn(),
     resumeAgent: vi.fn(),
     getTaskForActor: vi.fn(),
@@ -364,6 +372,34 @@ describe("resource read routes", () => {
     await app.close();
   });
 
+  it("returns a PNG org chart through GET /api/v1/org-chart.png", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const getOrgChartPng = vi
+      .spyOn(platformService, "getOrgChartPng")
+      .mockResolvedValue(Uint8Array.from([137, 80, 78, 71]));
+
+    const app = await createApp({
+      config: testConfig,
+      platformService,
+      runtime,
+    });
+
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/org-chart.png?companyId=company-1",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toContain("image/png");
+    expect(getOrgChartPng).toHaveBeenCalledWith("user-1", "company-1");
+    await app.close();
+  });
+
   it("returns the cost overview through GET /api/v1/costs/overview", async () => {
     const runtime = createRuntimeStub();
     const platformService = createPlatformServiceStub();
@@ -397,6 +433,88 @@ describe("resource read routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ summary: { monthSpendCents: 1200 } });
     expect(getCostOverview).toHaveBeenCalledWith("user-1", "company-1");
+    await app.close();
+  });
+
+  it("returns finance events through GET /api/v1/costs/finance-events", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const listFinanceEvents = vi.spyOn(platformService, "listFinanceEvents").mockResolvedValue([
+      {
+        id: "finance-1",
+        companyId: "company-1",
+        agentId: "agent-1",
+        heartbeatRunId: "heartbeat-1",
+        projectId: "project-1",
+        amountCents: 1200,
+        currency: "USD",
+        biller: "platform",
+        provider: "openai",
+        model: "gpt-5.4",
+        direction: "debit",
+        category: "usage_cost",
+        metadata: {},
+        createdAt: "2026-03-28T00:00:00.000Z",
+      },
+    ]);
+
+    const app = await createApp({ config: testConfig, platformService, runtime });
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/costs/finance-events?companyId=company-1",
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject([{ id: "finance-1", provider: "openai" }]);
+    expect(listFinanceEvents).toHaveBeenCalledWith("user-1", "company-1");
+    await app.close();
+  });
+
+  it("resolves join requests through POST /api/v1/join-requests/:joinRequestId/resolve", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const resolveJoinRequest = vi.spyOn(platformService, "resolveJoinRequest").mockResolvedValue({
+      joinRequest: {
+        id: "join-1",
+        companyId: "company-1",
+        kind: "human",
+        status: "approved",
+        requestedByUserId: "user-2",
+        requestedByAgentId: null,
+        email: "candidate@example.com",
+        role: "viewer",
+        note: null,
+        onboardingTitle: null,
+        onboardingBody: null,
+        manifest: {},
+        agentDraft: null,
+        resolvedByUserId: "user-1",
+        resolvedAt: "2026-03-28T00:00:00.000Z",
+        resolutionNotes: null,
+        createdAt: "2026-03-28T00:00:00.000Z",
+        updatedAt: "2026-03-28T00:00:00.000Z",
+      },
+      membership: null,
+      agent: null,
+    });
+
+    const app = await createApp({ config: testConfig, platformService, runtime });
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/join-requests/join-1/resolve",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { status: "approved", role: "viewer" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ joinRequest: { id: "join-1", status: "approved" } });
+    expect(resolveJoinRequest).toHaveBeenCalledWith("user-1", "join-1", {
+      status: "approved",
+      role: "viewer",
+    });
     await app.close();
   });
 
@@ -491,6 +609,43 @@ describe("resource read routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ id: "plugin-1", status: "disabled" });
     expect(setPluginStatus).toHaveBeenCalledWith("user-1", "plugin-1", "disabled");
+    await app.close();
+  });
+
+  it("returns plugin UI bridge metadata through GET /api/v1/plugins/:pluginId/ui", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const getPluginUiBridge = vi.spyOn(platformService, "getPluginUiBridge").mockResolvedValue({
+      pluginId: "plugin-1",
+      slug: "release-bot",
+      name: "Release Bot",
+      status: "active",
+      slots: [{ slot: "sidebar", title: "Release Bot" }],
+      mountUrl: "http://127.0.0.1:4444/ui",
+    });
+
+    const app = await createApp({
+      config: testConfig,
+      platformService,
+      runtime,
+    });
+
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/plugins/plugin-1/ui",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      pluginId: "plugin-1",
+      mountUrl: "http://127.0.0.1:4444/ui",
+      slots: [{ slot: "sidebar" }],
+    });
+    expect(getPluginUiBridge).toHaveBeenCalledWith("user-1", "plugin-1");
     await app.close();
   });
 });

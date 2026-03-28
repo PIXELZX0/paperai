@@ -1,6 +1,12 @@
 export const MEMBERSHIP_ROLES = ["owner", "board_admin", "board_operator", "auditor", "viewer"] as const;
 export type MembershipRole = (typeof MEMBERSHIP_ROLES)[number];
 
+export const JOIN_REQUEST_KINDS = ["human", "agent"] as const;
+export type JoinRequestKind = (typeof JOIN_REQUEST_KINDS)[number];
+
+export const JOIN_REQUEST_STATUSES = ["pending", "approved", "rejected", "cancelled"] as const;
+export type JoinRequestStatus = (typeof JOIN_REQUEST_STATUSES)[number];
+
 export const COMPANY_STATUSES = ["active", "paused", "archived"] as const;
 export type CompanyStatus = (typeof COMPANY_STATUSES)[number];
 
@@ -86,6 +92,8 @@ export const ACTIVITY_KINDS = [
   "company.updated",
   "membership.created",
   "invite.created",
+  "join_request.created",
+  "join_request.resolved",
   "goal.created",
   "goal.updated",
   "project.created",

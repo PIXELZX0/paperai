@@ -54,6 +54,9 @@ export const invites = pgTable("invites", {
   role: text("role").notNull(),
   token: text("token").notNull().unique(),
   invitedByUserId: uuid("invited_by_user_id").notNull().references(() => users.id),
+  onboardingTitle: text("onboarding_title"),
+  onboardingBody: text("onboarding_body"),
+  manifest: jsonb("manifest").$type<Record<string, unknown>>().notNull().default({}),
   acceptedAt: timestamp("accepted_at", { withTimezone: true }),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -164,6 +167,27 @@ export const agentApiKeys = pgTable("agent_api_keys", {
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const joinRequests = pgTable("join_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),
+  status: text("status").notNull().default("pending"),
+  requestedByUserId: uuid("requested_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  requestedByAgentId: uuid("requested_by_agent_id").references(() => agents.id, { onDelete: "set null" }),
+  email: text("email"),
+  role: text("role"),
+  note: text("note"),
+  onboardingTitle: text("onboarding_title"),
+  onboardingBody: text("onboarding_body"),
+  manifest: jsonb("manifest").$type<Record<string, unknown>>().notNull().default({}),
+  agentDraft: jsonb("agent_draft").$type<Record<string, unknown> | null>(),
+  resolvedByUserId: uuid("resolved_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  resolutionNotes: text("resolution_notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const tasks = pgTable("tasks", {

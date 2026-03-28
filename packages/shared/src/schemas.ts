@@ -46,6 +46,39 @@ export const updateCompanySchema = z.object({
 export const createInviteSchema = z.object({
   email: z.string().email(),
   role: z.enum(MEMBERSHIP_ROLES),
+  onboardingTitle: z.string().min(1).max(160).optional(),
+  onboardingBody: z.string().max(20_000).optional(),
+  manifest: z.record(z.unknown()).default({}),
+});
+
+export const createHumanJoinRequestSchema = z.object({
+  role: z.enum(MEMBERSHIP_ROLES).default("viewer"),
+  note: z.string().max(2_000).optional(),
+  onboardingTitle: z.string().min(1).max(160).optional(),
+  onboardingBody: z.string().max(20_000).optional(),
+  manifest: z.record(z.unknown()).default({}),
+});
+
+export const createAgentJoinRequestSchema = z.object({
+  slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
+  name: z.string().min(2),
+  title: z.string().optional(),
+  capabilities: z.string().optional(),
+  adapterType: z.enum(AGENT_ADAPTER_TYPES),
+  adapterConfig: z.record(z.unknown()).default({}),
+  runtimeConfig: z.record(z.unknown()).default({}),
+  permissions: z.array(z.string()).default([]),
+  budgetMonthlyCents: z.number().int().nonnegative().default(0),
+  note: z.string().max(2_000).optional(),
+  onboardingTitle: z.string().min(1).max(160).optional(),
+  onboardingBody: z.string().max(20_000).optional(),
+  manifest: z.record(z.unknown()).default({}),
+});
+
+export const resolveJoinRequestSchema = z.object({
+  status: z.enum(["approved", "rejected", "cancelled"]),
+  role: z.enum(MEMBERSHIP_ROLES).optional(),
+  resolutionNotes: z.string().max(2_000).optional(),
 });
 
 export const createGoalSchema = z.object({

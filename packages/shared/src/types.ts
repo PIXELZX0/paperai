@@ -13,6 +13,8 @@ import type {
   HeartbeatTriggerKind,
   IssuePriority,
   IssueStatus,
+  JoinRequestKind,
+  JoinRequestStatus,
   MembershipRole,
   PluginStatus,
   ProjectStatus,
@@ -67,9 +69,51 @@ export interface Invite {
   role: MembershipRole;
   token: string;
   invitedByUserId: string;
+  onboardingTitle: string | null;
+  onboardingBody: string | null;
+  manifest: Record<string, unknown>;
   acceptedAt: string | null;
   expiresAt: string;
   createdAt: string;
+}
+
+export interface JoinRequestAgentDraft {
+  slug: string;
+  name: string;
+  title: string | null;
+  capabilities: string | null;
+  adapterType: AgentAdapterType;
+  adapterConfig: Record<string, unknown>;
+  runtimeConfig: Record<string, unknown>;
+  permissions: string[];
+  budgetMonthlyCents: number;
+}
+
+export interface JoinRequest {
+  id: string;
+  companyId: string;
+  kind: JoinRequestKind;
+  status: JoinRequestStatus;
+  requestedByUserId: string | null;
+  requestedByAgentId: string | null;
+  email: string | null;
+  role: MembershipRole | null;
+  note: string | null;
+  onboardingTitle: string | null;
+  onboardingBody: string | null;
+  manifest: Record<string, unknown>;
+  agentDraft: JoinRequestAgentDraft | null;
+  resolvedByUserId: string | null;
+  resolvedAt: string | null;
+  resolutionNotes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface JoinRequestResolution {
+  joinRequest: JoinRequest;
+  membership: Membership | null;
+  agent: Agent | null;
 }
 
 export interface Goal {
@@ -575,6 +619,37 @@ export interface CompanyCostOverview {
   byProject: CostSummaryByProject[];
   byProvider: CostSummaryByProvider[];
   byBiller: CostSummaryByBiller[];
+}
+
+export interface FinanceEvent {
+  id: string;
+  companyId: string;
+  agentId: string | null;
+  heartbeatRunId: string | null;
+  projectId: string | null;
+  amountCents: number;
+  currency: string;
+  biller: string;
+  provider: string;
+  model: string | null;
+  direction: "debit" | "credit";
+  category: "usage_cost" | "credit" | "adjustment";
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface QuotaWindow {
+  id: string;
+  companyId: string;
+  scope: BudgetScope;
+  scopeRef: string | null;
+  periodStart: string;
+  periodEnd: string;
+  limitCents: number;
+  spentCents: number;
+  remainingCents: number;
+  hardStop: boolean;
+  status: "ok" | "warning" | "exceeded";
 }
 
 export interface PluginHealth {
