@@ -17,24 +17,46 @@ RUN pnpm --filter @paperai/server deploy --legacy --prod /prod/server
 
 FROM base AS runner
 
+ARG OPENCODE_VERSION=latest
+ARG CLAUDE_CODE_VERSION=latest
+ARG GEMINI_CLI_VERSION=latest
+ARG CODEX_VERSION=latest
+
 ENV NODE_ENV=production \
     PAPERAI_HEADLESS_BROWSER_BIN=/usr/bin/chromium \
     PAPERAI_HEADLESS_BROWSER_WRAPPER=/usr/local/bin/paperai-browser \
     CHROME_BIN=/usr/bin/chromium \
     CHROMIUM_BIN=/usr/bin/chromium \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
-    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
 
 WORKDIR /app
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
+    bash \
     chromium \
     ca-certificates \
+    curl \
     fonts-liberation \
     fonts-noto-cjk \
     fonts-noto-color-emoji \
+    git \
+    less \
+    ripgrep \
   && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g \
+    "opencode-ai@${OPENCODE_VERSION}" \
+    "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
+    "@openai/codex@${CODEX_VERSION}" \
+  && npm cache clean --force \
+  && opencode --version \
+  && claude --version \
+  && gemini --version \
+  && codex --version
 
 COPY --from=build /prod/server ./apps/server
 COPY --from=build /app/apps/web/dist ./apps/web/dist

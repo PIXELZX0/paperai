@@ -108,4 +108,23 @@ Related environment variables are preconfigured:
 - `CHROME_BIN`
 - `CHROMIUM_BIN`
 
+The image also installs the local agent CLIs used by subprocess adapters:
+
+- `opencode`
+- `claude`
+- `gemini`
+- `codex`
+
+If you want deterministic tool versions, override the default `latest` tags at build time:
+
+```bash
+docker build -t paperai \
+  --build-arg OPENCODE_VERSION=latest \
+  --build-arg CLAUDE_CODE_VERSION=latest \
+  --build-arg GEMINI_CLI_VERSION=latest \
+  --build-arg CODEX_VERSION=latest .
+```
+
+At runtime, provide the credentials those tools need through your environment file, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `GEMINI_API_KEY`. OpenCode can also use provider-specific keys depending on which model backend you configure.
+
 A reusable agent skill lives at `skills/headless-browser/SKILL.md`.
