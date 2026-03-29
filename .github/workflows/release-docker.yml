@@ -1,5 +1,8 @@
 name: Release
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 on:
   release:
     types: [published]
@@ -230,6 +233,19 @@ jobs:
           node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
+
+      - name: Validate npm token
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${NPM_TOKEN}" ]]; then
+            echo "NPM_TOKEN secret is not configured for this repository." >&2
+            echo "Add an npm automation token in GitHub repository secrets as NPM_TOKEN before publishing releases." >&2
+            exit 1
+          fi
 
       - name: Install dependencies
         shell: bash
