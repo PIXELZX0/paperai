@@ -383,10 +383,6 @@ export function DashboardPage() {
     enabled: Boolean(session.token && selectedPluginId),
   });
 
-  const selectedPlugin = useMemo(
-    () => plugins.data?.find((plugin) => plugin.id === selectedPluginId) ?? null,
-    [plugins.data, selectedPluginId],
-  );
   const selectedDocument = useMemo(
     () => issueDocuments.data?.find((document) => document.id === selectedDocumentId) ?? null,
     [issueDocuments.data, selectedDocumentId],
@@ -408,7 +404,6 @@ export function DashboardPage() {
     [companyId, events],
   );
 
-  const agentById = useMemo(() => new Map((agents.data ?? []).map((agent) => [agent.id, agent])), [agents.data]);
   const goalById = useMemo(() => new Map((goals.data ?? []).map((goal) => [goal.id, goal])), [goals.data]);
   const projectById = useMemo(() => new Map((projects.data ?? []).map((project) => [project.id, project])), [projects.data]);
 

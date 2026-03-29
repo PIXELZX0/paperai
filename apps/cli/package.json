@@ -1,10 +1,16 @@
 {
   "name": "paperai",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "type": "module",
+  "files": [
+    "dist"
+  ],
   "bin": {
     "papercli": "./dist/index.cjs",
     "paperai": "./dist/index.cjs"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "dev": "tsx src/index.ts",
@@ -12,11 +18,18 @@
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
+    "commander": "^13.1.0",
+    "embedded-postgres": "^18.1.0-beta.16",
+    "fast-json-stringify": "^6.3.0"
+  },
+  "devDependencies": {
     "@paperai/company-package": "workspace:*",
     "@paperai/db": "workspace:*",
-    "@paperai/server": "workspace:*",
     "@paperai/plugin-sdk": "workspace:*",
-    "@paperai/shared": "workspace:*",
-    "commander": "^13.1.0"
+    "@paperai/server": "workspace:*",
+    "@paperai/shared": "workspace:*"
   }
 }

@@ -1,4 +1,4 @@
-name: Docker Image
+name: Release
 
 on:
   release:
@@ -210,3 +210,54 @@ jobs:
         if: always() && (steps.login.outcome == 'failure' || steps.meta.outcome == 'failure' || steps.build.outcome == 'failure')
         shell: bash
         run: exit 1
+
+  npm_publish:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate release version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+
+          release_version="${RELEASE_TAG#v}"
+          package_version="$(node -p "require('./apps/cli/package.json').version")"
+
+          if [[ "${release_version}" != "${package_version}" ]]; then
+            echo "Release tag ${RELEASE_TAG} does not match apps/cli version ${package_version}." >&2
+            exit 1
+          fi
+
+      - name: Build CLI package
+        shell: bash
+        working-directory: ./apps/cli
+        run: pnpm build
+
+      - name: Publish CLI package to npm
+        shell: bash
+        working-directory: ./apps/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm publish --no-git-checks

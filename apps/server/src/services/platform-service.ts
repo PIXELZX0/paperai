@@ -11,7 +11,6 @@ import { Resvg } from "@resvg/resvg-js";
 import type {
   ActivityEvent,
   Agent,
-  AgentAccessTokenCreated,
   AgentApiKeyCreated,
   AgentRuntimeState,
   AgentSession,
@@ -362,40 +361,6 @@ function mapAgent(row: typeof schema.agents.$inferSelect): Agent {
     lastHeartbeatAt: toIso(row.lastHeartbeatAt),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
-function mapTask(row: typeof schema.tasks.$inferSelect): Task {
-  return {
-    id: row.id,
-    companyId: row.companyId,
-    projectId: row.projectId,
-    goalId: row.goalId,
-    parentTaskId: row.parentTaskId,
-    assigneeAgentId: row.assigneeAgentId,
-    createdByUserId: row.createdByUserId,
-    title: row.title,
-    description: row.description,
-    status: row.status as Task["status"],
-    priority: row.priority as Task["priority"],
-    checkoutHeartbeatRunId: row.checkoutHeartbeatRunId,
-    originKind: row.originKind,
-    originRef: row.originRef,
-    metadata: row.metadata,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
-function mapTaskComment(row: typeof schema.taskComments.$inferSelect): TaskComment {
-  return {
-    id: row.id,
-    taskId: row.taskId,
-    companyId: row.companyId,
-    authorUserId: row.authorUserId,
-    authorAgentId: row.authorAgentId,
-    body: row.body,
-    createdAt: row.createdAt.toISOString(),
   };
 }
 

@@ -50,6 +50,25 @@ importers:
 
   apps/cli:
     dependencies:
+      '@resvg/resvg-js':
+        specifier: ^2.6.2
+        version: 2.6.2
+      ajv:
+        specifier: ^8.18.0
+        version: 8.18.0
+      ajv-formats:
+        specifier: ^3.0.1
+        version: 3.0.1(ajv@8.18.0)
+      commander:
+        specifier: ^13.1.0
+        version: 13.1.0
+      embedded-postgres:
+        specifier: ^18.1.0-beta.16
+        version: 18.1.0-beta.16
+      fast-json-stringify:
+        specifier: ^6.3.0
+        version: 6.3.0
+    devDependencies:
       '@paperai/company-package':
         specifier: workspace:*
         version: link:../../packages/company-package
@@ -65,9 +84,6 @@ importers:
       '@paperai/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      commander:
-        specifier: ^13.1.0
-        version: 13.1.0
 
   apps/server:
     dependencies:

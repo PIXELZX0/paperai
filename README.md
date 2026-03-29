@@ -83,6 +83,7 @@ binary remains available as a compatibility alias for `papercli`.
 - CI runs `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` on pushes and pull requests.
 - Local operator checks are also available via `pnpm smoke:release:local`, `pnpm eval:operating`, and `pnpm test:e2e`.
 - Publishing a GitHub Release builds the production Docker image and pushes it to `yuchanshin/paperai`.
+- Publishing a GitHub Release also publishes the `paperai` CLI package to npm using `apps/cli/package.json`.
 - GitHub Releases push `latest` plus the release tag, and pushes to `main` publish `test-latest` plus a timestamped `test-YYYY-MM-DD-HH-MM-SS` tag.
 
 ## Docker
