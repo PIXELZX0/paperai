@@ -20,6 +20,7 @@ import { registerRunCommands } from "./commands/run.js";
 import { registerSecretCommands } from "./commands/secret.js";
 import { registerSkillCommands } from "./commands/skill.js";
 import { registerTaskCommands } from "./commands/task.js";
+import { registerUpdateCommand } from "./commands/update.js";
 import { registerWorkspaceCommands } from "./commands/workspace.js";
 
 function resolveInvocationName(explicitName?: string) {
@@ -66,6 +67,7 @@ export function buildProgram(input: CliRuntimeInput = {}) {
   registerSecretCommands(program, context);
   registerAgentCommands(program, context);
   registerTaskCommands(program, context);
+  registerUpdateCommand(program, context);
   registerIssueCommands(program, context);
   registerApprovalCommands(program, context);
   registerPackageCommands(program, context);

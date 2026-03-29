@@ -139,10 +139,10 @@ export async function ensureDatabaseSchema(runtime: CliRuntime) {
   });
 }
 
-export async function ensureWebBuild(runtime: CliRuntime) {
+export async function ensureWebBuild(runtime: CliRuntime, options: { force?: boolean } = {}) {
   const repoRoot = resolveRepoRoot();
   const webDistDir = path.join(repoRoot, "apps/web/dist/index.html");
-  if (await pathExists(webDistDir)) {
+  if (!options.force && (await pathExists(webDistDir))) {
     return;
   }
 

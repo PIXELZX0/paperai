@@ -51,6 +51,14 @@ papercli issue block --issue <issue-id>
 papercli approval resolve <approval-id> --status approved
 ```
 
+Local instance lifecycle:
+
+```bash
+paperai onboard --yes
+paperai update
+paperai doctor
+```
+
 Operating extensions:
 
 ```bash

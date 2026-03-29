@@ -4,7 +4,8 @@
 
 1. Run `paperai onboard --yes`
 2. If you want to inspect the generated operating config, open `~/.paperai/config.json`
-3. Run `paperai doctor`
+3. Run `paperai update` after pulling a newer PaperAI version
+4. Run `paperai doctor`
 
 `paperai onboard --yes` writes the local operating config, starts embedded Postgres by default, pushes the schema, and launches the server with the current web build.
 
@@ -14,6 +15,7 @@
 - `paperai configure database`
 - `paperai configure server`
 - `paperai configure auth`
+- `paperai update`
 - `paperai doctor`
 - `paperai run`
 - `paperai db:backup`
