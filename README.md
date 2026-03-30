@@ -142,6 +142,7 @@ The image also installs the local agent CLIs used by subprocess adapters:
 - `claude`
 - `gemini`
 - `codex`
+- `hermes`
 
 If you want deterministic tool versions, override the default `latest` tags at build time:
 
@@ -150,9 +151,10 @@ docker build -t paperai \
   --build-arg OPENCODE_VERSION=latest \
   --build-arg CLAUDE_CODE_VERSION=latest \
   --build-arg GEMINI_CLI_VERSION=latest \
-  --build-arg CODEX_VERSION=latest .
+  --build-arg CODEX_VERSION=latest \
+  --build-arg HERMES_AGENT_VERSION=latest .
 ```
 
-At runtime, provide the credentials those tools need through your environment file, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `GEMINI_API_KEY`. OpenCode can also use provider-specific keys depending on which model backend you configure.
+At runtime, provide the credentials those tools need through your environment file, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `GEMINI_API_KEY`. OpenCode can also use provider-specific keys depending on which model backend you configure, and Hermes follows its configured provider credentials.
 
 A reusable agent skill lives at `skills/headless-browser/SKILL.md`.

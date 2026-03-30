@@ -17,6 +17,7 @@ export const AGENT_ADAPTER_TYPES = [
   "claude_code",
   "codex",
   "gemini_cli",
+  "hermes",
   "opencode",
   "http_api",
   "openclaw_gateway",

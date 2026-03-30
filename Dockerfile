@@ -21,6 +21,7 @@ ARG OPENCODE_VERSION=latest
 ARG CLAUDE_CODE_VERSION=latest
 ARG GEMINI_CLI_VERSION=latest
 ARG CODEX_VERSION=latest
+ARG HERMES_AGENT_VERSION=latest
 
 ENV NODE_ENV=production \
     PAPERAI_HEADLESS_BROWSER_BIN=/usr/bin/chromium \
@@ -44,6 +45,8 @@ RUN apt-get update \
     fonts-noto-color-emoji \
     git \
     less \
+    python3 \
+    python3-pip \
     ripgrep \
   && rm -rf /var/lib/apt/lists/*
 
@@ -52,11 +55,18 @@ RUN npm install -g \
     "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
     "@openai/codex@${CODEX_VERSION}" \
-  && npm cache clean --force \
+  && npm cache clean --force
+
+RUN if [ "$HERMES_AGENT_VERSION" = "latest" ]; then \
+      pip3 install --break-system-packages --no-cache-dir hermes-agent; \
+    else \
+      pip3 install --break-system-packages --no-cache-dir "hermes-agent==${HERMES_AGENT_VERSION}"; \
+    fi \
   && opencode --version \
   && claude --version \
   && gemini --version \
-  && codex --version
+  && codex --version \
+  && command -v hermes
 
 COPY --from=build /prod/server ./apps/server
 COPY --from=build /app/apps/web/dist ./apps/web/dist

@@ -105,6 +105,9 @@ importers:
       '@paperai/adapter-gemini-cli':
         specifier: workspace:*
         version: link:../../packages/adapters/gemini-cli
+      '@paperai/adapter-hermes':
+        specifier: workspace:*
+        version: link:../../packages/adapters/hermes
       '@paperai/adapter-http-api':
         specifier: workspace:*
         version: link:../../packages/adapters/http-api
@@ -205,6 +208,12 @@ importers:
       '@paperai/adapter-local-process':
         specifier: workspace:*
         version: link:../local-process
+
+  packages/adapters/hermes:
+    dependencies:
+      '@paperai/adapter-sdk':
+        specifier: workspace:*
+        version: link:../../adapter-sdk
 
   packages/adapters/http-api:
     dependencies:

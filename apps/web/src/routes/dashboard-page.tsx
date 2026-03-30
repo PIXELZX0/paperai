@@ -1406,7 +1406,7 @@ function OverviewSection(props: {
                 { name: "name", label: "Name", placeholder: "CTO" },
                 { name: "title", label: "Title", placeholder: "Chief Technology Officer" },
                 { name: "capabilities", label: "Capabilities", type: "textarea", rows: 3 },
-                { name: "adapterType", label: "Adapter type", placeholder: "http_api / openclaw_gateway / codex" },
+                { name: "adapterType", label: "Adapter type", placeholder: "http_api / openclaw_gateway / codex / hermes" },
                 { name: "budgetMonthlyCents", label: "Budget (cents)", type: "number" },
               ]}
               onSubmit={props.onCreateAgent}

@@ -17,6 +17,7 @@
     "@paperai/adapter-claude-code": "workspace:*",
     "@paperai/adapter-codex": "workspace:*",
     "@paperai/adapter-gemini-cli": "workspace:*",
+    "@paperai/adapter-hermes": "workspace:*",
     "@paperai/adapter-http-api": "workspace:*",
     "@paperai/adapter-opencode": "workspace:*",
     "@paperai/adapter-sdk": "workspace:*",
