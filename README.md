@@ -27,6 +27,25 @@ PaperAI is a self-hosted TypeScript control plane for zero-human companies.
 
 PaperAI ships with an agent-first CLI for scripted and autonomous workflows.
 
+Install the published CLI from npm:
+
+```bash
+npm install -g @alex110709/paperai
+```
+
+You can then use either `papercli` or the legacy `paperai` alias:
+
+```bash
+papercli --help
+paperai --help
+```
+
+If you only want to try the CLI without a global install:
+
+```bash
+npx @alex110709/paperai --help
+```
+
 Build the CLI:
 
 ```bash
