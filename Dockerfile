@@ -57,25 +57,17 @@ RUN npm install -g \
     "@openai/codex@${CODEX_VERSION}" \
   && npm cache clean --force
 
-RUN set -euo pipefail \
-  && install_from_pypi() { \
-      local version="$1"; \
-      if [ "$version" = "latest" ]; then \
-        pip3 install --break-system-packages --no-cache-dir hermes-agent; \
-      else \
-        pip3 install --break-system-packages --no-cache-dir "hermes-agent==${version}"; \
+RUN set -eu \
+  && if [ "$HERMES_AGENT_VERSION" = "latest" ]; then \
+      if ! pip3 install --break-system-packages --no-cache-dir hermes-agent; then \
+        echo "hermes-agent is unavailable on PyPI, falling back to GitHub source install."; \
+        pip3 install --break-system-packages --no-cache-dir "git+https://github.com/NousResearch/hermes-agent.git@main"; \
       fi; \
-    } \
-  && install_from_git() { \
-      local ref="$1"; \
-      pip3 install --break-system-packages --no-cache-dir "git+https://github.com/NousResearch/hermes-agent.git@${ref}"; \
-    } \
-  && if ! install_from_pypi "$HERMES_AGENT_VERSION"; then \
-      echo "hermes-agent is unavailable on PyPI, falling back to GitHub source install."; \
-      if [ "$HERMES_AGENT_VERSION" = "latest" ]; then \
-        install_from_git "main"; \
-      else \
-        install_from_git "$HERMES_AGENT_VERSION" || install_from_git "v${HERMES_AGENT_VERSION}"; \
+    else \
+      if ! pip3 install --break-system-packages --no-cache-dir "hermes-agent==${HERMES_AGENT_VERSION}"; then \
+        echo "hermes-agent==${HERMES_AGENT_VERSION} is unavailable on PyPI, falling back to GitHub source install."; \
+        pip3 install --break-system-packages --no-cache-dir "git+https://github.com/NousResearch/hermes-agent.git@${HERMES_AGENT_VERSION}" \
+          || pip3 install --break-system-packages --no-cache-dir "git+https://github.com/NousResearch/hermes-agent.git@v${HERMES_AGENT_VERSION}"; \
       fi; \
     fi \
   && opencode --version \
