@@ -48,6 +48,15 @@ function createPlatformServiceStub() {
     getIssueForActor: vi.fn(),
     updateCompany: vi.fn(),
     listCompanyMembers: vi.fn(),
+    listDepartments: vi.fn(),
+    createDepartment: vi.fn(),
+    updateDepartment: vi.fn(),
+    deleteDepartment: vi.fn(),
+    listPositions: vi.fn(),
+    createPosition: vi.fn(),
+    updatePosition: vi.fn(),
+    deletePosition: vi.fn(),
+    updateAgentOrgProfile: vi.fn(),
   } as unknown as PlatformService;
 }
 
@@ -63,6 +72,8 @@ describe("resource read routes", () => {
       id: "agent-1",
       companyId: "company-1",
       parentAgentId: null,
+      departmentId: null,
+      positionId: null,
       slug: "ops",
       name: "Ops",
       title: "Operations",
@@ -264,6 +275,136 @@ describe("resource read routes", () => {
     await app.close();
   });
 
+  it("lists departments through GET /api/v1/departments", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const listDepartments = vi.spyOn(platformService, "listDepartments").mockResolvedValue([
+      {
+        id: "department-1",
+        companyId: "company-1",
+        slug: "engineering",
+        name: "Engineering",
+        description: "Build the core platform.",
+        headAgentId: "agent-1",
+        workSpecRelativePath: "departments/engineering/TEAM.md",
+        lastWorkSpecTaskId: "task-1",
+        createdAt: "2026-04-01T00:00:00.000Z",
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      },
+    ]);
+
+    const app = await createApp({
+      config: testConfig,
+      platformService,
+      runtime,
+    });
+
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/departments?companyId=company-1",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject([{ slug: "engineering", lastWorkSpecTaskId: "task-1" }]);
+    expect(listDepartments).toHaveBeenCalledWith(expect.objectContaining({ sub: "user-1" }), "company-1");
+    await app.close();
+  });
+
+  it("creates a position through POST /api/v1/positions", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const createPosition = vi.spyOn(platformService, "createPosition").mockResolvedValue({
+      id: "position-1",
+      companyId: "company-1",
+      slug: "cto",
+      name: "Chief Technology Officer",
+      description: null,
+      isExecutive: true,
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    const app = await createApp({
+      config: testConfig,
+      platformService,
+      runtime,
+    });
+
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/positions?companyId=company-1",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+      payload: {
+        slug: "cto",
+        name: "Chief Technology Officer",
+        isExecutive: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ slug: "cto", isExecutive: true });
+    expect(createPosition).toHaveBeenCalledWith(
+      expect.objectContaining({ sub: "user-1" }),
+      "company-1",
+      expect.objectContaining({ slug: "cto", isExecutive: true }),
+    );
+    await app.close();
+  });
+
+  it("updates agent org profile through PATCH /api/v1/agents/:agentId/org-profile", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+    const updateAgentOrgProfile = vi.spyOn(platformService, "updateAgentOrgProfile").mockResolvedValue({
+      agentId: "agent-1",
+      companyId: "company-1",
+      departmentId: "11111111-1111-1111-1111-111111111111",
+      positionId: "22222222-2222-2222-2222-222222222222",
+      title: "Head of Engineering",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+    });
+
+    const app = await createApp({
+      config: testConfig,
+      platformService,
+      runtime,
+    });
+
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/api/v1/agents/agent-1/org-profile",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+      payload: {
+        departmentId: "11111111-1111-1111-1111-111111111111",
+        positionId: "22222222-2222-2222-2222-222222222222",
+        title: "Head of Engineering",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      agentId: "agent-1",
+      departmentId: "11111111-1111-1111-1111-111111111111",
+      positionId: "22222222-2222-2222-2222-222222222222",
+      title: "Head of Engineering",
+    });
+    expect(updateAgentOrgProfile).toHaveBeenCalledWith(expect.objectContaining({ sub: "user-1" }), "agent-1", {
+      departmentId: "11111111-1111-1111-1111-111111111111",
+      positionId: "22222222-2222-2222-2222-222222222222",
+      title: "Head of Engineering",
+    });
+    await app.close();
+  });
+
   it("creates a board claim challenge through POST /api/v1/setup/board-claim", async () => {
     const runtime = createRuntimeStub();
     const platformService = createPlatformServiceStub();
@@ -304,6 +445,8 @@ describe("resource read routes", () => {
       id: "agent-1",
       companyId: "company-1",
       parentAgentId: null,
+      departmentId: null,
+      positionId: null,
       slug: "ops",
       name: "Ops",
       title: "Operations",
@@ -348,7 +491,17 @@ describe("resource read routes", () => {
     const platformService = createPlatformServiceStub();
     const getOrgTree = vi.spyOn(platformService, "getOrgTree").mockResolvedValue({
       company: { id: "company-1", name: "PaperAI", slug: "paperai" },
-      agents: [{ id: "agent-1", name: "CEO", title: "Chief Executive Officer", status: "idle", children: [] }],
+      agents: [
+        {
+          id: "agent-1",
+          name: "CEO",
+          title: "Chief Executive Officer",
+          department: null,
+          position: null,
+          status: "idle",
+          children: [],
+        },
+      ],
     });
 
     const app = await createApp({

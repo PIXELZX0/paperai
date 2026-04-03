@@ -11,6 +11,7 @@ import {
   createCliAuthChallengeSchema,
   createCompanySchema,
   createCompanySkillSchema,
+  createDepartmentSchema,
   createExecutionWorkspaceSchema,
   createGoalSchema,
   createIssueAttachmentSchema,
@@ -23,6 +24,7 @@ import {
   createPluginSchema,
   createProjectWorkspaceSchema,
   createProjectSchema,
+  createPositionSchema,
   createRoutineSchema,
   createSecretSchema,
   createAgentJoinRequestSchema,
@@ -40,12 +42,15 @@ import {
   triggerPluginWebhookSchema,
   updateCompanySkillSchema,
   updateCompanySchema,
+  updateDepartmentSchema,
   updateGoalSchema,
   updateIssueDocumentSchema,
   updatePluginStatusSchema,
   updateIssueSchema,
   updateProjectSchema,
+  updatePositionSchema,
   updateSecretSchema,
+  updateAgentOrgProfileSchema,
   updateTaskSchema,
   upgradePluginSchema,
 } from "@paperai/shared";
@@ -133,6 +138,60 @@ export const routes: FastifyPluginAsync = async (app) => {
     return await app.platformService.listCompanyMembers(
       request.user.sub,
       (request.params as { companyId: string }).companyId,
+    );
+  });
+
+  app.get("/api/v1/departments", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listDepartments(request.user, companyId);
+  });
+
+  app.post("/api/v1/departments", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    const payload = createDepartmentSchema.parse(request.body);
+    return await app.platformService.createDepartment(request.user, companyId, payload);
+  });
+
+  app.patch("/api/v1/departments/:departmentId", { preHandler: app.authenticate }, async (request) => {
+    const payload = updateDepartmentSchema.parse(request.body);
+    return await app.platformService.updateDepartment(
+      request.user,
+      (request.params as { departmentId: string }).departmentId,
+      payload,
+    );
+  });
+
+  app.delete("/api/v1/departments/:departmentId", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.deleteDepartment(
+      request.user,
+      (request.params as { departmentId: string }).departmentId,
+    );
+  });
+
+  app.get("/api/v1/positions", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    return await app.platformService.listPositions(request.user, companyId);
+  });
+
+  app.post("/api/v1/positions", { preHandler: app.authenticate }, async (request) => {
+    const companyId = parseCompanyId((request.query as { companyId?: string }).companyId);
+    const payload = createPositionSchema.parse(request.body);
+    return await app.platformService.createPosition(request.user, companyId, payload);
+  });
+
+  app.patch("/api/v1/positions/:positionId", { preHandler: app.authenticate }, async (request) => {
+    const payload = updatePositionSchema.parse(request.body);
+    return await app.platformService.updatePosition(
+      request.user,
+      (request.params as { positionId: string }).positionId,
+      payload,
+    );
+  });
+
+  app.delete("/api/v1/positions/:positionId", { preHandler: app.authenticate }, async (request) => {
+    return await app.platformService.deletePosition(
+      request.user,
+      (request.params as { positionId: string }).positionId,
     );
   });
 
@@ -390,6 +449,15 @@ export const routes: FastifyPluginAsync = async (app) => {
     const query = request.query as { companyId?: string };
     const payload = createAgentSchema.parse(request.body);
     return await app.platformService.createAgent(request.user.sub, parseCompanyId(query.companyId), payload);
+  });
+
+  app.patch("/api/v1/agents/:agentId/org-profile", { preHandler: app.authenticate }, async (request) => {
+    const payload = updateAgentOrgProfileSchema.parse(request.body);
+    return await app.platformService.updateAgentOrgProfile(
+      request.user,
+      (request.params as { agentId: string }).agentId,
+      payload,
+    );
   });
 
   app.post("/api/v1/agents/:agentId/pause", { preHandler: app.authenticate }, async (request) => {

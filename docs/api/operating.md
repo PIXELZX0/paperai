@@ -57,6 +57,31 @@ This document covers the first operating-control-plane endpoints added in the Pa
 - `GET /api/v1/execution-workspaces`
 - `POST /api/v1/execution-workspaces`
 
+## Departments / Positions
+
+- `GET /api/v1/departments`
+- `POST /api/v1/departments`
+- `PATCH /api/v1/departments/:departmentId`
+- `DELETE /api/v1/departments/:departmentId`
+- `GET /api/v1/positions`
+- `POST /api/v1/positions`
+- `PATCH /api/v1/positions/:positionId`
+- `DELETE /api/v1/positions/:positionId`
+- `PATCH /api/v1/agents/:agentId/org-profile`
+  - Updates an agent's department, position, and custom title override.
+
+### Department TEAM.md automation
+
+- Department create/update automatically queues a `department_workspec` task for a C-level assignee.
+- Assignee resolution:
+  - 1st priority: department head if their position has `isExecutive=true`.
+  - 2nd priority: company CEO agent fallback.
+- The automation requires `company.packageSource.type === "directory"`.
+  - Otherwise the request fails with `package_source_directory_required`.
+- TEAM.md target path:
+  - `<packageSource.locator>/departments/<department-slug>/TEAM.md`
+  - Server validates the resolved path stays inside the package root.
+
 ## Invites / Join Requests
 
 - `GET /api/v1/companies/:companyId/invites`

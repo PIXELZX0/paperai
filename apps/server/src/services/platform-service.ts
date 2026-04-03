@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { DomainEventBus } from "@paperai/core";
-import { hasBoardPermission } from "@paperai/core";
+import { hasBoardPermission, isChiefExecutiveOfficer } from "@paperai/core";
 import { parseCompanyPackage, exportCompanyPackage } from "@paperai/company-package";
 import { createDatabase, schema, type Database } from "@paperai/db";
 import { validatePluginManifest } from "@paperai/plugin-sdk";
@@ -11,6 +11,7 @@ import { Resvg } from "@resvg/resvg-js";
 import type {
   ActivityEvent,
   Agent,
+  AgentOrgProfile,
   AgentApiKeyCreated,
   AgentRuntimeState,
   AgentSession,
@@ -33,6 +34,7 @@ import type {
   CostSummaryByBiller,
   CostSummaryByProject,
   CostSummaryByProvider,
+  Department,
   ExecutionWorkspace,
   FinanceEvent,
   Goal,
@@ -50,6 +52,8 @@ import type {
   JoinRequestResolution,
   Membership,
   MembershipRole,
+  AuthTokenPayload,
+  Position,
   Plugin,
   PluginHealth,
   PluginRuntimeActionResult,
@@ -106,6 +110,15 @@ async function collectSkillFiles(root: string): Promise<string[]> {
   }
 
   return found;
+}
+
+function buildDepartmentWorkSpecRelativePath(departmentSlug: string): string {
+  return path.posix.join("departments", departmentSlug, "TEAM.md");
+}
+
+function ensurePathInsideRoot(rootPath: string, targetPath: string): boolean {
+  const relative = path.relative(rootPath, targetPath);
+  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
 function mapUser(row: typeof schema.users.$inferSelect): AuthUser {
@@ -292,6 +305,34 @@ function mapExecutionWorkspace(row: typeof schema.executionWorkspaces.$inferSele
   };
 }
 
+function mapDepartment(row: typeof schema.departments.$inferSelect): Department {
+  return {
+    id: row.id,
+    companyId: row.companyId,
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+    headAgentId: row.headAgentId,
+    workSpecRelativePath: row.workSpecRelativePath,
+    lastWorkSpecTaskId: row.lastWorkSpecTaskId,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function mapPosition(row: typeof schema.positions.$inferSelect): Position {
+  return {
+    id: row.id,
+    companyId: row.companyId,
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+    isExecutive: row.isExecutive,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
 function mapCompanySkill(row: typeof schema.companySkills.$inferSelect): CompanySkill {
   return {
     id: row.id,
@@ -346,6 +387,8 @@ function mapAgent(row: typeof schema.agents.$inferSelect): Agent {
     id: row.id,
     companyId: row.companyId,
     parentAgentId: row.parentAgentId,
+    departmentId: row.departmentId,
+    positionId: row.positionId,
     slug: row.slug,
     name: row.name,
     title: row.title,
@@ -637,6 +680,151 @@ export class PlatformService {
     }
 
     return value;
+  }
+
+  private async requireCompanyReadAccess(actor: AuthTokenPayload, companyId: string): Promise<void> {
+    if (actor.type === "agent") {
+      const agentId = actor.agentId ?? actor.sub;
+      const agent = await this.getAgent(agentId);
+      if (!agent || agent.companyId !== companyId) {
+        throw new Error("forbidden");
+      }
+      return;
+    }
+
+    await this.requirePermission(actor.sub, companyId, "audit:read");
+  }
+
+  private async requireDepartmentManagementAccess(actor: AuthTokenPayload, companyId: string): Promise<{
+    actorUserId: string | null;
+    actorAgentId: string | null;
+  }> {
+    if (actor.type === "agent") {
+      const agentId = actor.agentId ?? actor.sub;
+      const agent = await this.getAgent(agentId);
+      if (!agent || agent.companyId !== companyId || !isChiefExecutiveOfficer(agent)) {
+        throw new Error("forbidden");
+      }
+      return {
+        actorUserId: null,
+        actorAgentId: agent.id,
+      };
+    }
+
+    const membership = await this.getMembership(actor.sub, companyId);
+    if (!membership || (membership.role !== "owner" && membership.role !== "board_admin")) {
+      throw new Error("forbidden");
+    }
+
+    return {
+      actorUserId: actor.sub,
+      actorAgentId: null,
+    };
+  }
+
+  private async resolveDepartmentWorkSpecAssignee(companyId: string, headAgentId: string | null): Promise<Agent> {
+    if (headAgentId) {
+      const [headAgentRow] = await this.db
+        .select()
+        .from(schema.agents)
+        .where(and(eq(schema.agents.id, headAgentId), eq(schema.agents.companyId, companyId)));
+      if (headAgentRow?.positionId) {
+        const [headPosition] = await this.db.select().from(schema.positions).where(eq(schema.positions.id, headAgentRow.positionId));
+        if (headPosition?.isExecutive) {
+          return mapAgent(headAgentRow);
+        }
+      }
+    }
+
+    const agentRows = await this.db
+      .select()
+      .from(schema.agents)
+      .where(eq(schema.agents.companyId, companyId))
+      .orderBy(asc(schema.agents.createdAt));
+    const ceo = agentRows.find((agent) => isChiefExecutiveOfficer(mapAgent(agent)));
+    if (!ceo) {
+      throw new Error("c_level_agent_not_found");
+    }
+    return mapAgent(ceo);
+  }
+
+  private async requireDirectoryPackageSource(companyId: string): Promise<string> {
+    const [companyRow] = await this.db.select().from(schema.companies).where(eq(schema.companies.id, companyId));
+    const packageSource = (companyRow?.packageSource as Company["packageSource"] | null) ?? null;
+    if (!packageSource || packageSource.type !== "directory" || !packageSource.locator) {
+      throw new Error("package_source_directory_required");
+    }
+    return path.resolve(packageSource.locator);
+  }
+
+  private async queueDepartmentWorkSpecTask(
+    actor: AuthTokenPayload,
+    department: Department,
+    action: "created" | "updated",
+  ): Promise<Department> {
+    const packageRoot = await this.requireDirectoryPackageSource(department.companyId);
+    const relativePath = department.workSpecRelativePath;
+    const targetFilePath = path.resolve(packageRoot, relativePath);
+    if (!ensurePathInsideRoot(packageRoot, targetFilePath)) {
+      throw new Error("invalid_department_workspec_path");
+    }
+
+    const assignee = await this.resolveDepartmentWorkSpecAssignee(department.companyId, department.headAgentId);
+    const [taskRow] = await this.db
+      .insert(schema.tasks)
+      .values({
+        companyId: department.companyId,
+        assigneeAgentId: assignee.id,
+        createdByUserId: actor.type === "agent" ? null : actor.sub,
+        title: `${department.name} TEAM.md ${action === "created" ? "작성" : "갱신"}`,
+        description: [
+          `Write or update the department operating guide markdown.`,
+          `Department: ${department.name} (${department.slug})`,
+          `Target file path: ${targetFilePath}`,
+          `Required sections: Mission, Core Responsibilities, Collaboration Interfaces, KPIs, Operating Cadence, Handover Rules.`,
+        ].join("\n"),
+        status: "backlog",
+        priority: "medium",
+        originKind: "department_workspec",
+        originRef: department.id,
+        metadata: {
+          kind: "department_workspec",
+          departmentId: department.id,
+          targetFilePath,
+          templateVersion: 1,
+          workSpecRelativePath: relativePath,
+        },
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    const [updatedDepartmentRow] = await this.db
+      .update(schema.departments)
+      .set({
+        lastWorkSpecTaskId: taskRow.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.departments.id, department.id))
+      .returning();
+    const updatedDepartment = mapDepartment(updatedDepartmentRow);
+
+    await this.createHeartbeatRun(department.companyId, assignee.id, "assignment", "department_workspec", taskRow.id);
+    await this.recordActivity({
+      companyId: department.companyId,
+      actorUserId: actor.type === "agent" ? null : actor.sub,
+      actorAgentId: actor.type === "agent" ? actor.agentId ?? actor.sub : null,
+      kind: "task.created",
+      targetType: "task",
+      targetId: taskRow.id,
+      summary: `Queued department work spec task for ${department.name}`,
+      payload: {
+        departmentId: department.id,
+        assigneeAgentId: assignee.id,
+        targetFilePath,
+      },
+    });
+
+    return updatedDepartment;
   }
 
   static create(connectionString: string, eventBus: DomainEventBus): PlatformService {
@@ -1159,6 +1347,309 @@ export class PlatformService {
       .filter((member): member is CompanyMember => Boolean(member));
   }
 
+  async listDepartments(actor: AuthTokenPayload, companyId: string): Promise<Department[]> {
+    await this.requireCompanyReadAccess(actor, companyId);
+    const rows = await this.db
+      .select()
+      .from(schema.departments)
+      .where(eq(schema.departments.companyId, companyId))
+      .orderBy(asc(schema.departments.createdAt));
+    return rows.map(mapDepartment);
+  }
+
+  async createDepartment(
+    actor: AuthTokenPayload,
+    companyId: string,
+    input: {
+      slug: string;
+      name: string;
+      description?: string | null;
+      headAgentId?: string | null;
+    },
+  ): Promise<Department> {
+    const access = await this.requireDepartmentManagementAccess(actor, companyId);
+    await this.requireDirectoryPackageSource(companyId);
+    if (input.headAgentId) {
+      const [headAgent] = await this.db
+        .select({ id: schema.agents.id })
+        .from(schema.agents)
+        .where(and(eq(schema.agents.id, input.headAgentId), eq(schema.agents.companyId, companyId)));
+      if (!headAgent) {
+        throw new Error("invalid_head_agent");
+      }
+    }
+
+    const [row] = await this.db
+      .insert(schema.departments)
+      .values({
+        companyId,
+        slug: input.slug,
+        name: input.name,
+        description: input.description ?? null,
+        headAgentId: input.headAgentId ?? null,
+        workSpecRelativePath: buildDepartmentWorkSpecRelativePath(input.slug),
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    await this.recordActivity({
+      companyId,
+      actorUserId: access.actorUserId,
+      actorAgentId: access.actorAgentId,
+      kind: "department.created",
+      targetType: "department",
+      targetId: row.id,
+      summary: `Created department ${row.name}`,
+      payload: { slug: row.slug },
+    });
+
+    return await this.queueDepartmentWorkSpecTask(actor, mapDepartment(row), "created");
+  }
+
+  async updateDepartment(
+    actor: AuthTokenPayload,
+    departmentId: string,
+    input: Partial<Pick<Department, "slug" | "name" | "description" | "headAgentId">>,
+  ): Promise<Department> {
+    const [existing] = await this.db.select().from(schema.departments).where(eq(schema.departments.id, departmentId));
+    if (!existing) {
+      throw new Error("not_found");
+    }
+    const access = await this.requireDepartmentManagementAccess(actor, existing.companyId);
+    await this.requireDirectoryPackageSource(existing.companyId);
+
+    const nextHeadAgentId = input.headAgentId === undefined ? existing.headAgentId : input.headAgentId;
+    if (nextHeadAgentId) {
+      const [headAgent] = await this.db
+        .select({ id: schema.agents.id })
+        .from(schema.agents)
+        .where(and(eq(schema.agents.id, nextHeadAgentId), eq(schema.agents.companyId, existing.companyId)));
+      if (!headAgent) {
+        throw new Error("invalid_head_agent");
+      }
+    }
+
+    const nextSlug = input.slug ?? existing.slug;
+    const [row] = await this.db
+      .update(schema.departments)
+      .set({
+        slug: nextSlug,
+        name: input.name ?? existing.name,
+        description: input.description === undefined ? existing.description : input.description,
+        headAgentId: nextHeadAgentId,
+        workSpecRelativePath: buildDepartmentWorkSpecRelativePath(nextSlug),
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.departments.id, departmentId))
+      .returning();
+
+    await this.recordActivity({
+      companyId: existing.companyId,
+      actorUserId: access.actorUserId,
+      actorAgentId: access.actorAgentId,
+      kind: "department.updated",
+      targetType: "department",
+      targetId: row.id,
+      summary: `Updated department ${row.name}`,
+      payload: { slug: row.slug },
+    });
+
+    return await this.queueDepartmentWorkSpecTask(actor, mapDepartment(row), "updated");
+  }
+
+  async deleteDepartment(actor: AuthTokenPayload, departmentId: string): Promise<Department> {
+    const [existing] = await this.db.select().from(schema.departments).where(eq(schema.departments.id, departmentId));
+    if (!existing) {
+      throw new Error("not_found");
+    }
+    const access = await this.requireDepartmentManagementAccess(actor, existing.companyId);
+    const [row] = await this.db.delete(schema.departments).where(eq(schema.departments.id, departmentId)).returning();
+
+    await this.recordActivity({
+      companyId: existing.companyId,
+      actorUserId: access.actorUserId,
+      actorAgentId: access.actorAgentId,
+      kind: "department.deleted",
+      targetType: "department",
+      targetId: departmentId,
+      summary: `Deleted department ${existing.name}`,
+      payload: { slug: existing.slug },
+    });
+
+    return mapDepartment(row);
+  }
+
+  async listPositions(actor: AuthTokenPayload, companyId: string): Promise<Position[]> {
+    await this.requireCompanyReadAccess(actor, companyId);
+    const rows = await this.db
+      .select()
+      .from(schema.positions)
+      .where(eq(schema.positions.companyId, companyId))
+      .orderBy(asc(schema.positions.createdAt));
+    return rows.map(mapPosition);
+  }
+
+  async createPosition(
+    actor: AuthTokenPayload,
+    companyId: string,
+    input: {
+      slug: string;
+      name: string;
+      description?: string | null;
+      isExecutive: boolean;
+    },
+  ): Promise<Position> {
+    const access = await this.requireDepartmentManagementAccess(actor, companyId);
+    const [row] = await this.db
+      .insert(schema.positions)
+      .values({
+        companyId,
+        slug: input.slug,
+        name: input.name,
+        description: input.description ?? null,
+        isExecutive: input.isExecutive,
+        updatedAt: new Date(),
+      })
+      .returning();
+    await this.recordActivity({
+      companyId,
+      actorUserId: access.actorUserId,
+      actorAgentId: access.actorAgentId,
+      kind: "position.created",
+      targetType: "position",
+      targetId: row.id,
+      summary: `Created position ${row.name}`,
+      payload: { slug: row.slug, isExecutive: row.isExecutive },
+    });
+    return mapPosition(row);
+  }
+
+  async updatePosition(
+    actor: AuthTokenPayload,
+    positionId: string,
+    input: Partial<Pick<Position, "slug" | "name" | "description" | "isExecutive">>,
+  ): Promise<Position> {
+    const [existing] = await this.db.select().from(schema.positions).where(eq(schema.positions.id, positionId));
+    if (!existing) {
+      throw new Error("not_found");
+    }
+    const access = await this.requireDepartmentManagementAccess(actor, existing.companyId);
+    const [row] = await this.db
+      .update(schema.positions)
+      .set({
+        slug: input.slug ?? existing.slug,
+        name: input.name ?? existing.name,
+        description: input.description === undefined ? existing.description : input.description,
+        isExecutive: input.isExecutive ?? existing.isExecutive,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.positions.id, positionId))
+      .returning();
+
+    await this.recordActivity({
+      companyId: existing.companyId,
+      actorUserId: access.actorUserId,
+      actorAgentId: access.actorAgentId,
+      kind: "position.updated",
+      targetType: "position",
+      targetId: row.id,
+      summary: `Updated position ${row.name}`,
+      payload: { slug: row.slug, isExecutive: row.isExecutive },
+    });
+    return mapPosition(row);
+  }
+
+  async deletePosition(actor: AuthTokenPayload, positionId: string): Promise<Position> {
+    const [existing] = await this.db.select().from(schema.positions).where(eq(schema.positions.id, positionId));
+    if (!existing) {
+      throw new Error("not_found");
+    }
+    const access = await this.requireDepartmentManagementAccess(actor, existing.companyId);
+    const [row] = await this.db.delete(schema.positions).where(eq(schema.positions.id, positionId)).returning();
+    await this.recordActivity({
+      companyId: existing.companyId,
+      actorUserId: access.actorUserId,
+      actorAgentId: access.actorAgentId,
+      kind: "position.deleted",
+      targetType: "position",
+      targetId: existing.id,
+      summary: `Deleted position ${existing.name}`,
+      payload: { slug: existing.slug },
+    });
+    return mapPosition(row);
+  }
+
+  async updateAgentOrgProfile(
+    actor: AuthTokenPayload,
+    agentId: string,
+    input: {
+      departmentId?: string | null;
+      positionId?: string | null;
+      title?: string | null;
+    },
+  ): Promise<AgentOrgProfile> {
+    const [existing] = await this.db.select().from(schema.agents).where(eq(schema.agents.id, agentId));
+    if (!existing) {
+      throw new Error("not_found");
+    }
+    const access = await this.requireDepartmentManagementAccess(actor, existing.companyId);
+
+    if (input.departmentId !== undefined && input.departmentId !== null) {
+      const [department] = await this.db
+        .select({ id: schema.departments.id })
+        .from(schema.departments)
+        .where(and(eq(schema.departments.id, input.departmentId), eq(schema.departments.companyId, existing.companyId)));
+      if (!department) {
+        throw new Error("invalid_department");
+      }
+    }
+
+    if (input.positionId !== undefined && input.positionId !== null) {
+      const [position] = await this.db
+        .select({ id: schema.positions.id })
+        .from(schema.positions)
+        .where(and(eq(schema.positions.id, input.positionId), eq(schema.positions.companyId, existing.companyId)));
+      if (!position) {
+        throw new Error("invalid_position");
+      }
+    }
+
+    const [row] = await this.db
+      .update(schema.agents)
+      .set({
+        departmentId: input.departmentId === undefined ? existing.departmentId : input.departmentId,
+        positionId: input.positionId === undefined ? existing.positionId : input.positionId,
+        title: input.title === undefined ? existing.title : input.title,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.agents.id, agentId))
+      .returning();
+
+    await this.recordActivity({
+      companyId: existing.companyId,
+      actorUserId: access.actorUserId,
+      actorAgentId: access.actorAgentId,
+      kind: "agent.updated",
+      targetType: "agent",
+      targetId: row.id,
+      summary: `Updated org profile for ${row.name}`,
+      payload: {
+        departmentId: row.departmentId,
+        positionId: row.positionId,
+        title: row.title,
+      },
+    });
+
+    return {
+      agentId: row.id,
+      companyId: row.companyId,
+      departmentId: row.departmentId,
+      positionId: row.positionId,
+      title: row.title,
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
   async createInvite(
     actorUserId: string,
     companyId: string,
@@ -1393,6 +1884,8 @@ export class PlatformService {
         .insert(schema.agents)
         .values({
           companyId: existing.companyId,
+          departmentId: null,
+          positionId: null,
           slug: agentDraft.slug,
           name: agentDraft.name,
           title: agentDraft.title,
@@ -2272,6 +2765,8 @@ export class PlatformService {
       slug: string;
       name: string;
       title?: string;
+      departmentId?: string | null;
+      positionId?: string | null;
       capabilities?: string;
       parentAgentId?: string | null;
       adapterType: Agent["adapterType"];
@@ -2282,6 +2777,24 @@ export class PlatformService {
     },
   ) {
     await this.requirePermission(actorUserId, companyId, "agent:write");
+    if (input.departmentId) {
+      const [department] = await this.db
+        .select({ id: schema.departments.id })
+        .from(schema.departments)
+        .where(and(eq(schema.departments.id, input.departmentId), eq(schema.departments.companyId, companyId)));
+      if (!department) {
+        throw new Error("invalid_department");
+      }
+    }
+    if (input.positionId) {
+      const [position] = await this.db
+        .select({ id: schema.positions.id })
+        .from(schema.positions)
+        .where(and(eq(schema.positions.id, input.positionId), eq(schema.positions.companyId, companyId)));
+      if (!position) {
+        throw new Error("invalid_position");
+      }
+    }
     await this.resolveSecretReferencesForCompany(companyId, input.adapterConfig ?? {});
     await this.resolveSecretReferencesForCompany(companyId, input.runtimeConfig ?? {});
     const [agent] = await this.db
@@ -2289,6 +2802,8 @@ export class PlatformService {
       .values({
         companyId,
         parentAgentId: input.parentAgentId ?? null,
+        departmentId: input.departmentId ?? null,
+        positionId: input.positionId ?? null,
         slug: input.slug,
         name: input.name,
         title: input.title,
@@ -2325,9 +2840,15 @@ export class PlatformService {
   async getOrgTree(actorUserId: string, companyId: string) {
     const agents = await this.listAgents(actorUserId, companyId);
     const [company] = await this.db.select().from(schema.companies).where(eq(schema.companies.id, companyId));
+    const [departmentRows, positionRows] = await Promise.all([
+      this.db.select().from(schema.departments).where(eq(schema.departments.companyId, companyId)),
+      this.db.select().from(schema.positions).where(eq(schema.positions.companyId, companyId)),
+    ]);
     if (!company) {
       throw new Error("not_found");
     }
+    const departmentsById = new Map(departmentRows.map((department) => [department.id, department]));
+    const positionsById = new Map(positionRows.map((position) => [position.id, position]));
 
     const nodes = new Map(
       agents.map((agent) => [
@@ -2336,6 +2857,32 @@ export class PlatformService {
           id: agent.id,
           name: agent.name,
           title: agent.title,
+          department: agent.departmentId
+            ? (() => {
+                const department = departmentsById.get(agent.departmentId);
+                if (!department) {
+                  return null;
+                }
+                return {
+                  id: department.id,
+                  slug: department.slug,
+                  name: department.name,
+                };
+              })()
+            : null,
+          position: agent.positionId
+            ? (() => {
+                const position = positionsById.get(agent.positionId);
+                if (!position) {
+                  return null;
+                }
+                return {
+                  id: position.id,
+                  slug: position.slug,
+                  name: position.name,
+                };
+              })()
+            : null,
           status: agent.status,
           children: [] as Array<Record<string, unknown>>,
         },
@@ -3374,6 +3921,34 @@ export class PlatformService {
       .where(eq(schema.companies.id, companyId));
 
     for (const doc of manifest.docs) {
+      if (doc.kind === "team") {
+        const [existing] = await this.db
+          .select()
+          .from(schema.departments)
+          .where(and(eq(schema.departments.companyId, companyId), eq(schema.departments.slug, doc.slug)));
+
+        if (!existing) {
+          let headAgentId: string | null = null;
+          const headAgentSlug = typeof doc.frontmatter.headAgentSlug === "string" ? doc.frontmatter.headAgentSlug : null;
+          if (headAgentSlug) {
+            const [headAgent] = await this.db
+              .select()
+              .from(schema.agents)
+              .where(and(eq(schema.agents.companyId, companyId), eq(schema.agents.slug, headAgentSlug)));
+            headAgentId = headAgent?.id ?? null;
+          }
+          await this.db.insert(schema.departments).values({
+            companyId,
+            slug: doc.slug,
+            name: String(doc.frontmatter.name ?? doc.slug),
+            description: doc.body || null,
+            headAgentId,
+            workSpecRelativePath: doc.path,
+            updatedAt: new Date(),
+          });
+        }
+      }
+
       if (doc.kind === "agent") {
         const [existing] = await this.db
           .select()
@@ -3383,6 +3958,8 @@ export class PlatformService {
         if (!existing) {
           await this.db.insert(schema.agents).values({
             companyId,
+            departmentId: null,
+            positionId: null,
             slug: doc.slug,
             name: String(doc.frontmatter.name ?? doc.slug),
             title: String(doc.frontmatter.title ?? ""),
@@ -3451,6 +4028,12 @@ export class PlatformService {
     const agents = await this.listAgents(actorUserId, companyId);
     const projects = await this.listProjects(actorUserId, companyId);
     const tasks = await this.listTasks(actorUserId, companyId);
+    const [departments, positions] = await Promise.all([
+      this.listDepartments({ sub: actorUserId, type: "user" }, companyId),
+      this.listPositions({ sub: actorUserId, type: "user" }, companyId),
+    ]);
+    const departmentSlugById = new Map(departments.map((department) => [department.id, department.slug]));
+    const positionSlugById = new Map(positions.map((position) => [position.id, position.slug]));
 
     const manifest: CompanyPackageManifest = {
       root: company.slug,
@@ -3481,6 +4064,18 @@ export class PlatformService {
           },
           body: company.description ?? "",
         },
+        ...departments.map((department) => ({
+          kind: "team" as const,
+          path: department.workSpecRelativePath,
+          slug: department.slug,
+          frontmatter: {
+            kind: "team",
+            slug: department.slug,
+            name: department.name,
+            headAgentSlug: department.headAgentId ? agents.find((agent) => agent.id === department.headAgentId)?.slug ?? null : null,
+          },
+          body: department.description ?? "",
+        })),
         ...agents.map((agent) => ({
           kind: "agent" as const,
           path: `agents/${agent.slug}/AGENTS.md`,
@@ -3490,6 +4085,8 @@ export class PlatformService {
             slug: agent.slug,
             name: agent.name,
             title: agent.title,
+            departmentSlug: agent.departmentId ? departmentSlugById.get(agent.departmentId) ?? null : null,
+            positionSlug: agent.positionId ? positionSlugById.get(agent.positionId) ?? null : null,
           },
           body: agent.capabilities ?? "",
         })),

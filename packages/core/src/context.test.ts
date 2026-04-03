@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildExecutionInstructions } from "./context.js";
+import { isChiefExecutiveOfficer } from "./executives.js";
 import type { Agent, Company, Task } from "@paperai/shared";
 
 function createCompany(): Company {
@@ -45,6 +46,8 @@ function createAgent(input: Partial<Agent> = {}): Agent {
     id: "agent-1",
     companyId: "company-1",
     parentAgentId: null,
+    departmentId: null,
+    positionId: null,
     slug: "operator",
     name: "Operator",
     title: "Operations Lead",
@@ -87,5 +90,45 @@ describe("buildExecutionInstructions", () => {
 
     expect(instructions).not.toContain("design_guide.md");
     expect(instructions).not.toContain("define and maintain the company's identity");
+  });
+
+  it("adds department TEAM.md guidance for department_workspec tasks", () => {
+    const instructions = buildExecutionInstructions(
+      createCompany(),
+      createAgent(),
+      {
+        ...createTask(),
+        metadata: {
+          kind: "department_workspec",
+          targetFilePath: "/tmp/company/departments/engineering/TEAM.md",
+        },
+      },
+    );
+
+    expect(instructions).toContain("Department work-spec task");
+    expect(instructions).toContain("Target file path");
+    expect(instructions).toContain("Mission, Core Responsibilities");
+  });
+});
+
+describe("isChiefExecutiveOfficer", () => {
+  it("detects a CEO using title text", () => {
+    expect(
+      isChiefExecutiveOfficer({
+        slug: "ops",
+        name: "Operator",
+        title: "Chief Executive Officer",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not detect non-CEO roles", () => {
+    expect(
+      isChiefExecutiveOfficer({
+        slug: "cto",
+        name: "CTO",
+        title: "Chief Technology Officer",
+      }),
+    ).toBe(false);
   });
 });

@@ -138,10 +138,48 @@ export const projectWorkspaces = pgTable("project_workspaces", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const positions = pgTable(
+  "positions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    isExecutive: boolean("is_executive").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    companySlugUnique: uniqueIndex("positions_company_slug_idx").on(table.companyId, table.slug),
+  }),
+);
+
+export const departments = pgTable(
+  "departments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    headAgentId: uuid("head_agent_id").references((): AnyPgColumn => agents.id, { onDelete: "set null" }),
+    workSpecRelativePath: text("work_spec_relative_path").notNull(),
+    lastWorkSpecTaskId: uuid("last_work_spec_task_id").references((): AnyPgColumn => tasks.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    companySlugUnique: uniqueIndex("departments_company_slug_idx").on(table.companyId, table.slug),
+  }),
+);
+
 export const agents = pgTable("agents", {
   id: uuid("id").primaryKey().defaultRandom(),
   companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
   parentAgentId: uuid("parent_agent_id"),
+  departmentId: uuid("department_id").references(() => departments.id, { onDelete: "set null" }),
+  positionId: uuid("position_id").references(() => positions.id, { onDelete: "set null" }),
   slug: text("slug").notNull(),
   name: text("name").notNull(),
   title: text("title"),

@@ -106,10 +106,30 @@ export const createProjectSchema = z.object({
 
 export const updateProjectSchema = createProjectSchema.partial();
 
+export const createDepartmentSchema = z.object({
+  slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
+  name: z.string().min(2),
+  description: z.string().optional().nullable(),
+  headAgentId: z.string().uuid().optional().nullable(),
+});
+
+export const updateDepartmentSchema = createDepartmentSchema.partial();
+
+export const createPositionSchema = z.object({
+  slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
+  name: z.string().min(2),
+  description: z.string().optional().nullable(),
+  isExecutive: z.boolean().default(false),
+});
+
+export const updatePositionSchema = createPositionSchema.partial();
+
 export const createAgentSchema = z.object({
   slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
   name: z.string().min(2),
   title: z.string().optional(),
+  departmentId: z.string().uuid().optional().nullable(),
+  positionId: z.string().uuid().optional().nullable(),
   capabilities: z.string().optional(),
   parentAgentId: z.string().uuid().optional().nullable(),
   adapterType: z.enum(AGENT_ADAPTER_TYPES),
@@ -117,6 +137,12 @@ export const createAgentSchema = z.object({
   runtimeConfig: z.record(z.unknown()).default({}),
   permissions: z.array(z.string()).default([]),
   budgetMonthlyCents: z.number().int().nonnegative().default(0),
+});
+
+export const updateAgentOrgProfileSchema = z.object({
+  departmentId: z.string().uuid().optional().nullable(),
+  positionId: z.string().uuid().optional().nullable(),
+  title: z.string().optional().nullable(),
 });
 
 export const createTaskSchema = z.object({

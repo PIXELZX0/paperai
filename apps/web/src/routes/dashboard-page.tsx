@@ -11,6 +11,7 @@ import {
   type Company,
   type CompanyCostOverview,
   type CompanySkill,
+  type Department,
   type ExecutionWorkspace,
   type FinanceEvent,
   type Issue,
@@ -20,6 +21,7 @@ import {
   type PluginRuntimeActionResult,
   type ProjectWorkspace,
   type QuotaWindow,
+  type Position,
 } from "@paperai/shared";
 import { useNavigate, useParams } from "react-router-dom";
 import { InlineForm } from "../components/forms.js";
@@ -42,6 +44,8 @@ type OrgTreeNode = {
   id: string;
   name: string;
   title: string | null;
+  department: { id: string; slug: string; name: string } | null;
+  position: { id: string; slug: string; name: string } | null;
   status: string;
   children: OrgTreeNode[];
 };
@@ -204,6 +208,18 @@ export function DashboardPage() {
   const members = useQuery({
     queryKey: ["company-members", companyId],
     queryFn: () => api.companyMembers(session.token!, companyId),
+    enabled: hasCompany,
+  });
+
+  const departments = useQuery({
+    queryKey: ["departments", companyId],
+    queryFn: () => api.departments(session.token!, companyId),
+    enabled: hasCompany,
+  });
+
+  const positions = useQuery({
+    queryKey: ["positions", companyId],
+    queryFn: () => api.positions(session.token!, companyId),
     enabled: hasCompany,
   });
 
@@ -415,6 +431,22 @@ export function DashboardPage() {
       })),
     [agents.data],
   );
+  const departmentOptions = useMemo(
+    () =>
+      (departments.data ?? []).map((department) => ({
+        label: `${department.name} · ${department.slug}`,
+        value: department.id,
+      })),
+    [departments.data],
+  );
+  const positionOptions = useMemo(
+    () =>
+      (positions.data ?? []).map((position) => ({
+        label: `${position.name}${position.isExecutive ? " · C-level" : ""}`,
+        value: position.id,
+      })),
+    [positions.data],
+  );
   const goalOptions = useMemo(
     () =>
       (goals.data ?? []).map((goal) => ({
@@ -458,6 +490,8 @@ export function DashboardPage() {
   const invalidateCompanyData = async () => {
     await queryClient.invalidateQueries({ queryKey: ["companies", session.token] });
     await queryClient.invalidateQueries({ queryKey: ["company-members", companyId] });
+    await queryClient.invalidateQueries({ queryKey: ["departments", companyId] });
+    await queryClient.invalidateQueries({ queryKey: ["positions", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["company-invites", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["join-requests", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["activity", companyId] });
@@ -507,6 +541,70 @@ export function DashboardPage() {
     onSuccess: async () => {
       await invalidateCompanyData();
     },
+  });
+
+  const createDepartment = useMutation({
+    mutationFn: (values: Record<string, string>) =>
+      api.createDepartment(session.token!, companyId, {
+        slug: values.slug,
+        name: values.name,
+        description: values.description || null,
+        headAgentId: values.headAgentId || null,
+      }),
+    onSuccess: invalidateCompanyData,
+  });
+
+  const updateDepartment = useMutation({
+    mutationFn: (values: Record<string, string>) =>
+      api.updateDepartment(session.token!, values.departmentId, {
+        slug: values.slug || undefined,
+        name: values.name || undefined,
+        description: values.description ? values.description : values.description === "" ? null : undefined,
+        headAgentId: values.headAgentId ? values.headAgentId : values.headAgentId === "" ? null : undefined,
+      }),
+    onSuccess: invalidateCompanyData,
+  });
+
+  const deleteDepartment = useMutation({
+    mutationFn: (departmentId: string) => api.deleteDepartment(session.token!, departmentId),
+    onSuccess: invalidateCompanyData,
+  });
+
+  const createPosition = useMutation({
+    mutationFn: (values: Record<string, string>) =>
+      api.createPosition(session.token!, companyId, {
+        slug: values.slug,
+        name: values.name,
+        description: values.description || null,
+        isExecutive: values.isExecutive === "true",
+      }),
+    onSuccess: invalidateCompanyData,
+  });
+
+  const updatePosition = useMutation({
+    mutationFn: (values: Record<string, string>) =>
+      api.updatePosition(session.token!, values.positionId, {
+        slug: values.slug || undefined,
+        name: values.name || undefined,
+        description: values.description ? values.description : values.description === "" ? null : undefined,
+        isExecutive: values.isExecutive === "" ? undefined : values.isExecutive === "true",
+      }),
+    onSuccess: invalidateCompanyData,
+  });
+
+  const deletePosition = useMutation({
+    mutationFn: (positionId: string) => api.deletePosition(session.token!, positionId),
+    onSuccess: invalidateCompanyData,
+  });
+
+  const updateAgentOrgProfile = useMutation({
+    mutationFn: (values: Record<string, string>) =>
+      api.updateAgentOrgProfile(session.token!, values.agentId, {
+        departmentId: values.departmentId ? values.departmentId : values.departmentId === "" ? null : undefined,
+        positionId: values.positionId ? values.positionId : values.positionId === "" ? null : undefined,
+        title: values.title ? values.title : values.title === "" ? null : undefined,
+      }),
+    onSuccess: invalidateCompanyData,
   });
 
   const createInvite = useMutation({
@@ -587,6 +685,8 @@ export function DashboardPage() {
         slug: values.slug,
         name: values.name,
         title: values.title || undefined,
+        departmentId: values.departmentId || null,
+        positionId: values.positionId || null,
         capabilities: values.capabilities || undefined,
         adapterType: values.adapterType || "http_api",
         adapterConfig: {},
@@ -953,6 +1053,8 @@ export function DashboardPage() {
                     company={selectedCompany}
                     companySettingsInitialValues={companySettingsInitialValues}
                     members={members.data ?? []}
+                    departments={departments.data ?? []}
+                    positions={positions.data ?? []}
                     invites={invites.data ?? []}
                     joinRequests={joinRequests.data ?? []}
                     pendingInvites={pendingInvites.length}
@@ -969,6 +1071,8 @@ export function DashboardPage() {
                     goalById={goalById}
                     projectById={projectById}
                     agentOptions={agentOptions}
+                    departmentOptions={departmentOptions}
+                    positionOptions={positionOptions}
                     goalOptions={goalOptions}
                     projectOptions={projectOptions}
                     issueOptions={issueOptions}
@@ -1002,6 +1106,27 @@ export function DashboardPage() {
                     }}
                     onCreateAgent={async (values) => {
                       await createAgent.mutateAsync(values);
+                    }}
+                    onCreateDepartment={async (values) => {
+                      await createDepartment.mutateAsync(values);
+                    }}
+                    onUpdateDepartment={async (values) => {
+                      await updateDepartment.mutateAsync(values);
+                    }}
+                    onDeleteDepartment={async (departmentId) => {
+                      await deleteDepartment.mutateAsync(departmentId);
+                    }}
+                    onCreatePosition={async (values) => {
+                      await createPosition.mutateAsync(values);
+                    }}
+                    onUpdatePosition={async (values) => {
+                      await updatePosition.mutateAsync(values);
+                    }}
+                    onDeletePosition={async (positionId) => {
+                      await deletePosition.mutateAsync(positionId);
+                    }}
+                    onUpdateAgentOrgProfile={async (values) => {
+                      await updateAgentOrgProfile.mutateAsync(values);
                     }}
                   />
                 ) : null}
@@ -1191,6 +1316,8 @@ function OverviewSection(props: {
   company: Company;
   companySettingsInitialValues?: Record<string, string>;
   members: Array<{ id: string; role: string; createdAt: string; user: { name: string; email: string } }>;
+  departments: Department[];
+  positions: Position[];
   invites: Array<{ id: string; email: string; role: string; token: string; acceptedAt: string | null; expiresAt: string; createdAt: string }>;
   joinRequests: JoinRequest[];
   pendingInvites: number;
@@ -1201,12 +1328,22 @@ function OverviewSection(props: {
   issues: Issue[];
   approvals: Array<{ id: string; title: string; description: string | null }>;
   heartbeats: Array<{ id: string; triggerKind: string; error: string | null; status: string }>;
-  agents: Array<{ id: string; name: string; title: string | null; adapterType: string; status: string }>;
+  agents: Array<{
+    id: string;
+    name: string;
+    title: string | null;
+    adapterType: string;
+    status: string;
+    departmentId: string | null;
+    positionId: string | null;
+  }>;
   plugins: Plugin[];
   routines: Array<{ id: string }>;
   goalById: Map<string, { title: string }>;
   projectById: Map<string, { name: string }>;
   agentOptions: Array<{ label: string; value: string }>;
+  departmentOptions: Array<{ label: string; value: string }>;
+  positionOptions: Array<{ label: string; value: string }>;
   goalOptions: Array<{ label: string; value: string }>;
   projectOptions: Array<{ label: string; value: string }>;
   issueOptions: Array<{ label: string; value: string }>;
@@ -1219,7 +1356,17 @@ function OverviewSection(props: {
   onCreateProject(values: Record<string, string>): Promise<void>;
   onCreateIssue(values: Record<string, string>): Promise<void>;
   onCreateAgent(values: Record<string, string>): Promise<void>;
+  onCreateDepartment(values: Record<string, string>): Promise<void>;
+  onUpdateDepartment(values: Record<string, string>): Promise<void>;
+  onDeleteDepartment(departmentId: string): Promise<void>;
+  onCreatePosition(values: Record<string, string>): Promise<void>;
+  onUpdatePosition(values: Record<string, string>): Promise<void>;
+  onDeletePosition(positionId: string): Promise<void>;
+  onUpdateAgentOrgProfile(values: Record<string, string>): Promise<void>;
 }) {
+  const departmentById = useMemo(() => new Map(props.departments.map((department) => [department.id, department])), [props.departments]);
+  const positionById = useMemo(() => new Map(props.positions.map((position) => [position.id, position])), [props.positions]);
+
   return (
     <>
       <section className="grid gap-6 2xl:grid-cols-2">
@@ -1394,6 +1541,151 @@ function OverviewSection(props: {
             </div>
           )}
         </Panel>
+
+        <Panel title="Department 관리">
+          <div className="grid gap-4">
+            <InlineForm
+              submitLabel="Add department"
+              fields={[
+                { name: "slug", label: "Slug", placeholder: "engineering" },
+                { name: "name", label: "Name", placeholder: "Engineering" },
+                { name: "description", label: "Description", type: "textarea", rows: 2 },
+                { name: "headAgentId", label: "Head agent", options: props.agentOptions, emptyLabel: "No head agent" },
+              ]}
+              onSubmit={props.onCreateDepartment}
+            />
+            {props.departments.length === 0 ? (
+              <EmptyState message="No departments yet. Creating one automatically queues a C-level TEAM.md task." />
+            ) : (
+              <div className="grid gap-3">
+                {props.departments.map((department) => (
+                  <article key={department.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-2">
+                        <h3 className="font-medium text-white">{department.name}</h3>
+                        <p className="text-xs text-zinc-500">{department.slug}</p>
+                        {department.description ? <p className="text-sm text-zinc-400">{department.description}</p> : null}
+                        <div className="flex flex-wrap gap-2">
+                          <Badge
+                            label={department.lastWorkSpecTaskId ? "MD task queued" : "MD task pending"}
+                            tone={department.lastWorkSpecTaskId ? "bg-emerald-300/20 text-emerald-200" : "bg-amber-300/20 text-amber-100"}
+                          />
+                          <Badge label={department.workSpecRelativePath} tone="bg-white/10 text-zinc-200" />
+                        </div>
+                      </div>
+                      <button
+                        className="rounded-full bg-rose-300 px-3 py-1 text-xs font-medium text-zinc-950"
+                        onClick={() => {
+                          void props.onDeleteDepartment(department.id);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                    <div className="mt-4">
+                      <InlineForm
+                        submitLabel="Update department"
+                        initialValues={{
+                          departmentId: department.id,
+                          slug: department.slug,
+                          name: department.name,
+                          description: department.description ?? "",
+                          headAgentId: department.headAgentId ?? "",
+                        }}
+                        fields={[
+                          { name: "departmentId", label: "Department id", placeholder: department.id },
+                          { name: "slug", label: "Slug" },
+                          { name: "name", label: "Name" },
+                          { name: "description", label: "Description", type: "textarea", rows: 2 },
+                          { name: "headAgentId", label: "Head agent", options: props.agentOptions, emptyLabel: "No head agent" },
+                        ]}
+                        onSubmit={props.onUpdateDepartment}
+                      />
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </Panel>
+
+        <Panel title="Position 관리">
+          <div className="grid gap-4">
+            <InlineForm
+              submitLabel="Add position"
+              initialValues={{ isExecutive: "false" }}
+              fields={[
+                { name: "slug", label: "Slug", placeholder: "cto" },
+                { name: "name", label: "Name", placeholder: "Chief Technology Officer" },
+                { name: "description", label: "Description", type: "textarea", rows: 2 },
+                {
+                  name: "isExecutive",
+                  label: "Executive",
+                  options: [
+                    { label: "true", value: "true" },
+                    { label: "false", value: "false" },
+                  ],
+                  emptyLabel: "false",
+                },
+              ]}
+              onSubmit={props.onCreatePosition}
+            />
+            {props.positions.length === 0 ? (
+              <EmptyState message="No standard positions yet." />
+            ) : (
+              <div className="grid gap-3">
+                {props.positions.map((position) => (
+                  <article key={position.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-2">
+                        <h3 className="font-medium text-white">{position.name}</h3>
+                        <p className="text-xs text-zinc-500">{position.slug}</p>
+                        {position.description ? <p className="text-sm text-zinc-400">{position.description}</p> : null}
+                        {position.isExecutive ? <Badge label="C-level" tone="bg-cyan-300/15 text-cyan-100" /> : null}
+                      </div>
+                      <button
+                        className="rounded-full bg-rose-300 px-3 py-1 text-xs font-medium text-zinc-950"
+                        onClick={() => {
+                          void props.onDeletePosition(position.id);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                    <div className="mt-4">
+                      <InlineForm
+                        submitLabel="Update position"
+                        initialValues={{
+                          positionId: position.id,
+                          slug: position.slug,
+                          name: position.name,
+                          description: position.description ?? "",
+                          isExecutive: String(position.isExecutive),
+                        }}
+                        fields={[
+                          { name: "positionId", label: "Position id", placeholder: position.id },
+                          { name: "slug", label: "Slug" },
+                          { name: "name", label: "Name" },
+                          { name: "description", label: "Description", type: "textarea", rows: 2 },
+                          {
+                            name: "isExecutive",
+                            label: "Executive",
+                            options: [
+                              { label: "true", value: "true" },
+                              { label: "false", value: "false" },
+                            ],
+                            emptyLabel: String(position.isExecutive),
+                          },
+                        ]}
+                        onSubmit={props.onUpdatePosition}
+                      />
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </Panel>
       </section>
 
       <section className="grid gap-6 2xl:grid-cols-[0.95fr_1.05fr]">
@@ -1404,7 +1696,9 @@ function OverviewSection(props: {
               fields={[
                 { name: "slug", label: "Slug", placeholder: "cto" },
                 { name: "name", label: "Name", placeholder: "CTO" },
-                { name: "title", label: "Title", placeholder: "Chief Technology Officer" },
+                { name: "title", label: "Custom title", placeholder: "Chief Technology Officer" },
+                { name: "departmentId", label: "Department", options: props.departmentOptions, emptyLabel: "Unassigned" },
+                { name: "positionId", label: "Position", options: props.positionOptions, emptyLabel: "Unassigned" },
                 { name: "capabilities", label: "Capabilities", type: "textarea", rows: 3 },
                 { name: "adapterType", label: "Adapter type", placeholder: "http_api / openclaw_gateway / codex / hermes" },
                 { name: "budgetMonthlyCents", label: "Budget (cents)", type: "number" },
@@ -1597,21 +1891,59 @@ function OverviewSection(props: {
             ) : (
               <div className="grid gap-3">
                 {props.agents.map((agent) => (
-                  <article key={agent.id} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 p-4">
-                    <div>
-                      <h3 className="font-medium text-white">{agent.name}</h3>
-                      <p className="text-sm text-zinc-400">{agent.title ?? agent.adapterType}</p>
+                  <article key={agent.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-medium text-white">{agent.name}</h3>
+                        <p className="text-sm text-zinc-400">{agent.title ?? agent.adapterType}</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {agent.departmentId ? (
+                            <Badge
+                              label={`Dept: ${departmentById.get(agent.departmentId)?.name ?? agent.departmentId.slice(0, 8)}`}
+                              tone="bg-cyan-300/15 text-cyan-100"
+                            />
+                          ) : (
+                            <Badge label="Dept: Unassigned" tone="bg-white/10 text-zinc-200" />
+                          )}
+                          {agent.positionId ? (
+                            <Badge
+                              label={`Position: ${positionById.get(agent.positionId)?.name ?? agent.positionId.slice(0, 8)}`}
+                              tone="bg-violet-300/15 text-violet-100"
+                            />
+                          ) : (
+                            <Badge label="Position: Unassigned" tone="bg-white/10 text-zinc-200" />
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <Badge label={agent.status} tone={STATUS_TONES[agent.status] ?? "bg-white/10 text-zinc-200"} />
+                        <button
+                          className="rounded-full bg-amber-300 px-3 py-1 text-sm font-medium text-zinc-900"
+                          onClick={() => {
+                            void props.onWakeAgent(agent.id);
+                          }}
+                        >
+                          Wake
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <Badge label={agent.status} tone={STATUS_TONES[agent.status] ?? "bg-white/10 text-zinc-200"} />
-                      <button
-                        className="rounded-full bg-amber-300 px-3 py-1 text-sm font-medium text-zinc-900"
-                        onClick={() => {
-                          void props.onWakeAgent(agent.id);
+                    <div className="mt-4">
+                      <InlineForm
+                        submitLabel="Update org profile"
+                        initialValues={{
+                          agentId: agent.id,
+                          departmentId: agent.departmentId ?? "",
+                          positionId: agent.positionId ?? "",
+                          title: agent.title ?? "",
                         }}
-                      >
-                        Wake
-                      </button>
+                        fields={[
+                          { name: "agentId", label: "Agent id", placeholder: agent.id },
+                          { name: "departmentId", label: "Department", options: props.departmentOptions, emptyLabel: "Unassigned" },
+                          { name: "positionId", label: "Position", options: props.positionOptions, emptyLabel: "Unassigned" },
+                          { name: "title", label: "Custom title", placeholder: "Optional override title" },
+                        ]}
+                        onSubmit={props.onUpdateAgentOrgProfile}
+                      />
                     </div>
                   </article>
                 ))}
@@ -2478,6 +2810,14 @@ function OrgNodeCard(props: { node: OrgTreeNode; depth?: number }) {
           <div>
             <div className="font-medium text-white">{props.node.name}</div>
             <div className="text-sm text-zinc-400">{props.node.title ?? "No title"}</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {props.node.department ? (
+                <Badge label={`Dept: ${props.node.department.name}`} tone="bg-cyan-300/15 text-cyan-100" />
+              ) : null}
+              {props.node.position ? (
+                <Badge label={`Position: ${props.node.position.name}`} tone="bg-violet-300/15 text-violet-100" />
+              ) : null}
+            </div>
           </div>
           <Badge label={props.node.status} tone={STATUS_TONES[props.node.status] ?? "bg-white/10 text-zinc-200"} />
         </div>

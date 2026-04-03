@@ -50,6 +50,30 @@ export interface CompanyPackageSource {
   importedAt?: string | null;
 }
 
+export interface Department {
+  id: string;
+  companyId: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  headAgentId: string | null;
+  workSpecRelativePath: string;
+  lastWorkSpecTaskId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Position {
+  id: string;
+  companyId: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  isExecutive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Membership {
   id: string;
   companyId: string;
@@ -169,6 +193,8 @@ export interface Agent {
   id: string;
   companyId: string;
   parentAgentId: string | null;
+  departmentId: string | null;
+  positionId: string | null;
   slug: string;
   name: string;
   title: string | null;
@@ -183,6 +209,15 @@ export interface Agent {
   sessionState: Record<string, unknown> | null;
   lastHeartbeatAt: string | null;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentOrgProfile {
+  agentId: string;
+  companyId: string;
+  departmentId: string | null;
+  positionId: string | null;
+  title: string | null;
   updatedAt: string;
 }
 

@@ -1,11 +1,27 @@
 import type { Agent, Company, Task } from "@paperai/shared";
+import { isChiefExecutiveOfficer } from "./executives.js";
 
-function isChiefExecutiveOfficer(agent: Agent): boolean {
-  const slug = agent.slug.toLowerCase();
-  const name = agent.name.toLowerCase();
-  const title = agent.title?.toLowerCase() ?? "";
+function buildDepartmentWorkSpecInstructions(task: Task | null): string[] {
+  if (!task || task.metadata.kind !== "department_workspec") {
+    return [];
+  }
 
-  return slug === "ceo" || name === "ceo" || title.includes("chief executive officer") || title === "ceo";
+  const targetFilePath = typeof task.metadata.targetFilePath === "string" ? task.metadata.targetFilePath : null;
+  const requiredSections = [
+    "Mission",
+    "Core Responsibilities",
+    "Collaboration Interfaces",
+    "KPIs",
+    "Operating Cadence",
+    "Handover Rules",
+  ];
+
+  return [
+    "Department work-spec task: create or update the department TEAM.md in the target filesystem path.",
+    targetFilePath ? `Target file path: ${targetFilePath}` : "Target file path: (not provided in metadata)",
+    `Required sections: ${requiredSections.join(", ")}.`,
+    "Write practical, concrete operating guidance as production-ready markdown and keep language concise.",
+  ];
 }
 
 export function buildExecutionInstructions(company: Company, agent: Agent, task: Task | null): string {
@@ -16,6 +32,7 @@ export function buildExecutionInstructions(company: Company, agent: Agent, task:
         "Use design_guide.md to keep product, marketing, and internal operator experiences visually and verbally consistent.",
       ]
     : [];
+  const departmentWorkSpecInstructions = buildDepartmentWorkSpecInstructions(task);
 
   return [
     `Company: ${company.name}`,
@@ -24,6 +41,7 @@ export function buildExecutionInstructions(company: Company, agent: Agent, task:
     task?.description ? `Task details: ${task.description}` : "",
     agent.capabilities ? `Capabilities: ${agent.capabilities}` : "",
     ...roleInstructions,
+    ...departmentWorkSpecInstructions,
     "Operate autonomously, stay within budget, and report work as structured progress.",
   ]
     .filter(Boolean)

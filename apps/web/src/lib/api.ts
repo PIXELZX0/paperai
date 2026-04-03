@@ -7,6 +7,7 @@ import type {
   CompanyMember,
   CompanySkill,
   CostEvent,
+  Department,
   ExecutionWorkspace,
   FinanceEvent,
   Goal,
@@ -29,7 +30,9 @@ import type {
   QuotaWindow,
   Routine,
   Secret,
+  Position,
   Task,
+  AgentOrgProfile,
 } from "@paperai/shared";
 
 export const API_BASE =
@@ -102,6 +105,38 @@ export const api = {
     }),
   companyMembers: (token: string, companyId: string) =>
     apiRequest<CompanyMember[]>(`/companies/${companyId}/members`, token),
+  departments: (token: string, companyId: string) =>
+    apiRequest<Department[]>(`/departments?companyId=${companyId}`, token),
+  createDepartment: (token: string, companyId: string, payload: Record<string, unknown>) =>
+    apiRequest<Department>(`/departments?companyId=${companyId}`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateDepartment: (token: string, departmentId: string, payload: Record<string, unknown>) =>
+    apiRequest<Department>(`/departments/${departmentId}`, token, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deleteDepartment: (token: string, departmentId: string) =>
+    apiRequest<Department>(`/departments/${departmentId}`, token, {
+      method: "DELETE",
+    }),
+  positions: (token: string, companyId: string) =>
+    apiRequest<Position[]>(`/positions?companyId=${companyId}`, token),
+  createPosition: (token: string, companyId: string, payload: Record<string, unknown>) =>
+    apiRequest<Position>(`/positions?companyId=${companyId}`, token, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updatePosition: (token: string, positionId: string, payload: Record<string, unknown>) =>
+    apiRequest<Position>(`/positions/${positionId}`, token, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deletePosition: (token: string, positionId: string) =>
+    apiRequest<Position>(`/positions/${positionId}`, token, {
+      method: "DELETE",
+    }),
   invites: (token: string, companyId: string) => apiRequest<Invite[]>(`/companies/${companyId}/invites`, token),
   createInvite: (token: string, companyId: string, payload: Record<string, unknown>) =>
     apiRequest<Invite>(`/companies/${companyId}/invites`, token, {
@@ -209,6 +244,11 @@ export const api = {
   createAgent: (token: string, companyId: string, payload: Record<string, unknown>) =>
     apiRequest<Agent>(`/agents?companyId=${companyId}`, token, {
       method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateAgentOrgProfile: (token: string, agentId: string, payload: Record<string, unknown>) =>
+    apiRequest<AgentOrgProfile>(`/agents/${agentId}/org-profile`, token, {
+      method: "PATCH",
       body: JSON.stringify(payload),
     }),
   wakeAgent: (token: string, agentId: string) =>

@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AgentOrgProfile,
   AgentAccessTokenCreated,
   AgentApiKeyCreated,
   AgentRuntimeState,
@@ -12,6 +13,7 @@ import type {
   Company,
   CompanyCostOverview,
   CompanySkill,
+  Department,
   ExecutionWorkspace,
   FinanceEvent,
   Issue,
@@ -29,6 +31,7 @@ import type {
   ProjectWorkspace,
   QuotaWindow,
   Secret,
+  Position,
   Task,
   TaskComment,
 } from "@paperai/shared";
@@ -117,6 +120,54 @@ export class PaperAiApiClient {
     return this.request<Company[]>("/companies");
   }
 
+  listDepartments(companyId: string) {
+    return this.request<Department[]>(`/departments?companyId=${encodeURIComponent(companyId)}`);
+  }
+
+  createDepartment(companyId: string, payload: Record<string, unknown>) {
+    return this.request<Department>(`/departments?companyId=${encodeURIComponent(companyId)}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  updateDepartment(departmentId: string, payload: Record<string, unknown>) {
+    return this.request<Department>(`/departments/${encodeURIComponent(departmentId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  deleteDepartment(departmentId: string) {
+    return this.request<Department>(`/departments/${encodeURIComponent(departmentId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  listPositions(companyId: string) {
+    return this.request<Position[]>(`/positions?companyId=${encodeURIComponent(companyId)}`);
+  }
+
+  createPosition(companyId: string, payload: Record<string, unknown>) {
+    return this.request<Position>(`/positions?companyId=${encodeURIComponent(companyId)}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  updatePosition(positionId: string, payload: Record<string, unknown>) {
+    return this.request<Position>(`/positions/${encodeURIComponent(positionId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  deletePosition(positionId: string) {
+    return this.request<Position>(`/positions/${encodeURIComponent(positionId)}`, {
+      method: "DELETE",
+    });
+  }
+
   listJoinRequests(companyId: string) {
     return this.request<JoinRequest[]>(`/companies/${encodeURIComponent(companyId)}/join-requests`);
   }
@@ -144,6 +195,13 @@ export class PaperAiApiClient {
 
   listAgents(companyId: string) {
     return this.request<Agent[]>(`/agents?companyId=${encodeURIComponent(companyId)}`);
+  }
+
+  updateAgentOrgProfile(agentId: string, payload: Record<string, unknown>) {
+    return this.request<AgentOrgProfile>(`/agents/${encodeURIComponent(agentId)}/org-profile`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
   }
 
   getAgent(agentId: string) {
