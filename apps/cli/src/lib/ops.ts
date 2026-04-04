@@ -2,7 +2,6 @@ import { access, mkdir, stat } from "node:fs/promises";
 import { constants as fsConstants, existsSync } from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import type { PaperAiConfig } from "@paperai/shared";
 import { ensureEmbeddedPostgres, type EmbeddedPostgresHandle } from "@paperai/db";
 import type { CliRuntime } from "./runtime.js";
@@ -72,11 +71,6 @@ export function resolveRepoRoot(env: NodeJS.ProcessEnv = process.env): string {
   const cwdWorkspace = findWorkspaceRoot(process.cwd());
   if (cwdWorkspace) {
     return cwdWorkspace;
-  }
-
-  const moduleWorkspace = findWorkspaceRoot(path.dirname(fileURLToPath(import.meta.url)));
-  if (moduleWorkspace) {
-    return moduleWorkspace;
   }
 
   throw new CliError(
