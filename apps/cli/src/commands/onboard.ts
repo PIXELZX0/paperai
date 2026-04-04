@@ -6,6 +6,7 @@ import type { CommandContext } from "../lib/context.js";
 import { CliError } from "../lib/errors.js";
 import {
   defaultPaperAiConfig,
+  deriveGatewayUrlFromServer,
   getInstanceConfigPath,
   readInstanceConfig,
   writeInstanceConfig,
@@ -69,6 +70,15 @@ function ensureJwtSecret(config: PaperAiConfig): PaperAiConfig {
   const next = cloneConfig(config);
   if (next.server.jwtSecret === "change-me-paperai") {
     next.server.jwtSecret = randomUUID().replaceAll("-", "") + randomUUID().replaceAll("-", "");
+  }
+  return next;
+}
+
+function applyGatewayDefault(config: PaperAiConfig): PaperAiConfig {
+  const next = cloneConfig(config);
+  const legacyDefault = "http://localhost:8788/execute";
+  if (!next.gateway.openclawUrl || next.gateway.openclawUrl === legacyDefault) {
+    next.gateway.openclawUrl = deriveGatewayUrlFromServer(next.server);
   }
   return next;
 }
@@ -202,7 +212,7 @@ async function promptOnboardConfig(
       {
         value: "advanced" as const,
         label: "Advanced setup",
-        hint: "Configure database, server, auth, and gateway",
+        hint: "Configure database and server",
       },
     ],
     initialValue: "quickstart",
@@ -337,51 +347,8 @@ async function promptOnboardConfig(
     }
     next.server.jwtSecret = String(jwtSecret ?? "").trim();
 
-    p.log.step(pc.bold("Auth"));
-    const boardClaimTtl = await p.text({
-      message: "Board claim TTL minutes",
-      initialValue: String(next.auth.boardClaimTtlMinutes),
-      validate: (value) => validatePositiveInteger(value, "auth.boardClaimTtlMinutes"),
-    });
-    if (p.isCancel(boardClaimTtl)) {
-      p.cancel("Onboarding cancelled.");
-      return null;
-    }
-    next.auth.boardClaimTtlMinutes = parsePositiveInteger(String(boardClaimTtl ?? ""), "auth.boardClaimTtlMinutes");
-
-    const cliChallengeTtl = await p.text({
-      message: "CLI challenge TTL minutes",
-      initialValue: String(next.auth.cliChallengeTtlMinutes),
-      validate: (value) => validatePositiveInteger(value, "auth.cliChallengeTtlMinutes"),
-    });
-    if (p.isCancel(cliChallengeTtl)) {
-      p.cancel("Onboarding cancelled.");
-      return null;
-    }
-    next.auth.cliChallengeTtlMinutes = parsePositiveInteger(String(cliChallengeTtl ?? ""), "auth.cliChallengeTtlMinutes");
-
-    const agentTokenTtl = await p.text({
-      message: "Agent token TTL minutes",
-      initialValue: String(next.auth.agentTokenTtlMinutes),
-      validate: (value) => validatePositiveInteger(value, "auth.agentTokenTtlMinutes"),
-    });
-    if (p.isCancel(agentTokenTtl)) {
-      p.cancel("Onboarding cancelled.");
-      return null;
-    }
-    next.auth.agentTokenTtlMinutes = parsePositiveInteger(String(agentTokenTtl ?? ""), "auth.agentTokenTtlMinutes");
-
-    p.log.step(pc.bold("Gateway"));
-    const gatewayUrl = await p.text({
-      message: "OpenClaw gateway execute URL",
-      initialValue: next.gateway.openclawUrl,
-      validate: (value) => validateUrl(value, "gateway.openclawUrl"),
-    });
-    if (p.isCancel(gatewayUrl)) {
-      p.cancel("Onboarding cancelled.");
-      return null;
-    }
-    next.gateway.openclawUrl = parseUrl(String(gatewayUrl ?? ""), "gateway.openclawUrl");
+    // Keep auth TTL defaults without prompting and derive gateway URL from server settings.
+    next.gateway.openclawUrl = deriveGatewayUrlFromServer(next.server);
   } else {
     p.log.step(pc.bold("Quickstart"));
     p.log.message(pc.dim("Keeping defaults/current values."));
@@ -441,7 +408,7 @@ export async function onboardAction(context: CommandContext, options: OnboardOpt
     configured = prompted;
   }
 
-  const config = ensureJwtSecret(configured);
+  const config = ensureJwtSecret(applyGatewayDefault(configured));
   const persistedConfigPath = await writeInstanceConfig(context.runtime.env, config);
   const apiUrl = resolveApiUrlFromConfig(config);
 

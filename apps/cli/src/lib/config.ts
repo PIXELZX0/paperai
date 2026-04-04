@@ -75,8 +75,31 @@ export function normalizeProfileConfig(profile: ProfileConfig): ProfileConfig {
   return next;
 }
 
+export function deriveGatewayUrlFromServer(server: {
+  host: string;
+  port: number;
+  webOrigin: string;
+}): string {
+  const protocol = (() => {
+    try {
+      return new URL(server.webOrigin).protocol;
+    } catch {
+      return "http:";
+    }
+  })();
+
+  const normalizedHost = server.host === "0.0.0.0" ? "127.0.0.1" : server.host;
+  return `${protocol}//${normalizedHost}:${server.port}/execute`;
+}
+
 export function defaultPaperAiConfig(env: NodeJS.ProcessEnv): PaperAiConfig {
   const homeDir = getPaperAiHomeDir(env);
+  const server = {
+    host: "127.0.0.1",
+    port: 3001,
+    webOrigin: "http://localhost:5173",
+    jwtSecret: "change-me-paperai",
+  } as const;
 
   return {
     version: 1,
@@ -88,14 +111,9 @@ export function defaultPaperAiConfig(env: NodeJS.ProcessEnv): PaperAiConfig {
         dir: path.join(homeDir, "backups"),
       },
     },
-    server: {
-      host: "127.0.0.1",
-      port: 3001,
-      webOrigin: "http://localhost:5173",
-      jwtSecret: "change-me-paperai",
-    },
+    server: { ...server },
     gateway: {
-      openclawUrl: "http://localhost:8788/execute",
+      openclawUrl: deriveGatewayUrlFromServer(server),
     },
     auth: {
       boardClaimTtlMinutes: 30,
