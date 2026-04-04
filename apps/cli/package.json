@@ -1,6 +1,6 @@
 {
   "name": "@alex110709/paperai",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "type": "module",
   "files": [
     "dist"
@@ -18,12 +18,14 @@
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@clack/prompts": "^1.2.0",
     "@resvg/resvg-js": "^2.6.2",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
     "commander": "^13.1.0",
     "embedded-postgres": "^18.1.0-beta.16",
-    "fast-json-stringify": "^6.3.0"
+    "fast-json-stringify": "^6.3.0",
+    "picocolors": "^1.1.1"
   },
   "devDependencies": {
     "@paperai/company-package": "workspace:*",

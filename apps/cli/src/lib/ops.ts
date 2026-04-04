@@ -2,6 +2,7 @@ import { access, mkdir, stat } from "node:fs/promises";
 import { constants as fsConstants, existsSync } from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import type { PaperAiConfig } from "@paperai/shared";
 import { ensureEmbeddedPostgres, type EmbeddedPostgresHandle } from "@paperai/db";
 import type { CliRuntime } from "./runtime.js";
@@ -39,8 +40,8 @@ export function resolveApiUrlFromConfig(config: PaperAiConfig): string {
   return `http://${config.server.host === "0.0.0.0" ? "127.0.0.1" : config.server.host}:${config.server.port}/api/v1`;
 }
 
-export function resolveRepoRoot(): string {
-  let current = process.cwd();
+function findWorkspaceRoot(start: string): string | null {
+  let current = path.resolve(start);
 
   while (true) {
     if (existsSync(path.join(current, "pnpm-workspace.yaml"))) {
@@ -49,10 +50,38 @@ export function resolveRepoRoot(): string {
 
     const parent = path.dirname(current);
     if (parent === current) {
-      return process.cwd();
+      return null;
     }
     current = parent;
   }
+}
+
+export function resolveRepoRoot(env: NodeJS.ProcessEnv = process.env): string {
+  const overrideRoot = env.PAPERAI_REPO_ROOT?.trim();
+  if (overrideRoot) {
+    const resolved = path.resolve(overrideRoot);
+    const workspaceRoot = findWorkspaceRoot(resolved);
+    if (!workspaceRoot || workspaceRoot !== resolved) {
+      throw new CliError(
+        `PAPERAI_REPO_ROOT must point to a PaperAI workspace root containing pnpm-workspace.yaml (received: ${resolved}).`,
+      );
+    }
+    return resolved;
+  }
+
+  const cwdWorkspace = findWorkspaceRoot(process.cwd());
+  if (cwdWorkspace) {
+    return cwdWorkspace;
+  }
+
+  const moduleWorkspace = findWorkspaceRoot(path.dirname(fileURLToPath(import.meta.url)));
+  if (moduleWorkspace) {
+    return moduleWorkspace;
+  }
+
+  throw new CliError(
+    "Could not locate the PaperAI workspace. Run this command from the PaperAI repository root or set PAPERAI_REPO_ROOT=/absolute/path/to/paperai.",
+  );
 }
 
 async function pathExists(targetPath: string): Promise<boolean> {
@@ -132,7 +161,7 @@ export async function runProcess(
 }
 
 export async function ensureDatabaseSchema(runtime: CliRuntime) {
-  const repoRoot = resolveRepoRoot();
+  const repoRoot = resolveRepoRoot(runtime.env);
   await runProcess(runtime, "pnpm", ["db:push"], {
     cwd: repoRoot,
     env: runtime.env,
@@ -140,7 +169,7 @@ export async function ensureDatabaseSchema(runtime: CliRuntime) {
 }
 
 export async function ensureWebBuild(runtime: CliRuntime, options: { force?: boolean } = {}) {
-  const repoRoot = resolveRepoRoot();
+  const repoRoot = resolveRepoRoot(runtime.env);
   const webDistDir = path.join(repoRoot, "apps/web/dist/index.html");
   if (!options.force && (await pathExists(webDistDir))) {
     return;

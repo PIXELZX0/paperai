@@ -12,6 +12,7 @@ import {
   ensureDatabaseSchema,
   ensureEmbeddedDatabase,
   ensurePaperAiHome,
+  resolveRepoRoot,
   ensureWebBuild,
 } from "../lib/ops.js";
 
@@ -35,6 +36,8 @@ export async function runAction(context: CommandContext, options: RunOptions) {
     await writeInstanceConfig(context.runtime.env, config);
   }
 
+  resolveRepoRoot(context.runtime.env);
+
   let embeddedHandle: EmbeddedPostgresHandle | null = null;
   let close = async () => {};
 
@@ -44,6 +47,7 @@ export async function runAction(context: CommandContext, options: RunOptions) {
     context.runtime.env.HOST = config.server.host;
     context.runtime.env.JWT_SECRET = config.server.jwtSecret;
     context.runtime.env.PAPERAI_WEB_ORIGIN = config.server.webOrigin;
+    context.runtime.env.PAPERAI_OPENCLAW_GATEWAY_URL = config.gateway.openclawUrl;
     context.runtime.env.BOARD_CLAIM_TTL_MINUTES = String(config.auth.boardClaimTtlMinutes);
     context.runtime.env.CLI_CHALLENGE_TTL_MINUTES = String(config.auth.cliChallengeTtlMinutes);
     context.runtime.env.AGENT_TOKEN_TTL_MINUTES = String(config.auth.agentTokenTtlMinutes);

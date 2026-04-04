@@ -15,6 +15,7 @@ import {
   ensurePaperAiHome,
   ensureWebBuild,
   resolveApiUrlFromConfig,
+  resolveRepoRoot,
 } from "../lib/ops.js";
 
 type UpdateOptions = {
@@ -38,6 +39,10 @@ function mergeConfigWithDefaults(current: PaperAiConfig, defaults: PaperAiConfig
     server: {
       ...defaults.server,
       ...current.server,
+    },
+    gateway: {
+      ...defaults.gateway,
+      ...current.gateway,
     },
     auth: {
       ...defaults.auth,
@@ -65,6 +70,7 @@ export async function updateAction(context: CommandContext, options: UpdateOptio
   let embeddedHandle: EmbeddedPostgresHandle | null = null;
 
   try {
+    resolveRepoRoot(context.runtime.env);
     embeddedHandle = await ensureEmbeddedDatabase(next, context.runtime);
     await ensureDatabaseSchema(context.runtime);
     await ensureWebBuild(context.runtime, { force: true });

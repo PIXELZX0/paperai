@@ -94,6 +94,9 @@ export function defaultPaperAiConfig(env: NodeJS.ProcessEnv): PaperAiConfig {
       webOrigin: "http://localhost:5173",
       jwtSecret: "change-me-paperai",
     },
+    gateway: {
+      openclawUrl: "http://localhost:8788/execute",
+    },
     auth: {
       boardClaimTtlMinutes: 30,
       cliChallengeTtlMinutes: 10,

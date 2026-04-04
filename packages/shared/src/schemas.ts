@@ -371,6 +371,10 @@ export const paperAiServerConfigSchema = z.object({
   jwtSecret: z.string().min(8).default("change-me-paperai"),
 });
 
+export const paperAiGatewayConfigSchema = z.object({
+  openclawUrl: z.string().url().default("http://localhost:8788/execute"),
+});
+
 export const paperAiAuthConfigSchema = z.object({
   boardClaimTtlMinutes: z.number().int().positive().default(30),
   cliChallengeTtlMinutes: z.number().int().positive().default(10),
@@ -381,6 +385,9 @@ export const paperAiConfigSchema = z.object({
   version: z.literal(1).default(1),
   database: paperAiDatabaseConfigSchema,
   server: paperAiServerConfigSchema,
+  gateway: paperAiGatewayConfigSchema.default({
+    openclawUrl: "http://localhost:8788/execute",
+  }),
   auth: paperAiAuthConfigSchema,
 });
 

@@ -11,6 +11,7 @@ import {
   ensurePaperAiHome,
   ensureWebBuild,
   resolveApiUrlFromConfig,
+  resolveRepoRoot,
 } from "../lib/ops.js";
 
 vi.mock("../lib/config.js", () => ({
@@ -26,6 +27,7 @@ vi.mock("../lib/ops.js", () => ({
   ensurePaperAiHome: vi.fn(),
   ensureWebBuild: vi.fn(),
   resolveApiUrlFromConfig: vi.fn(),
+  resolveRepoRoot: vi.fn(),
 }));
 
 class MemoryWritable extends Writable {
@@ -86,6 +88,9 @@ describe("updateAction", () => {
         webOrigin: "http://localhost:5173",
         jwtSecret: "default-secret",
       },
+      gateway: {
+        openclawUrl: "http://localhost:8788/execute",
+      },
       auth: {
         boardClaimTtlMinutes: 30,
         cliChallengeTtlMinutes: 10,
@@ -109,6 +114,9 @@ describe("updateAction", () => {
         webOrigin: "https://paperai.local",
         jwtSecret: "custom-secret",
       },
+      gateway: {
+        openclawUrl: "https://gateway.paperai.local/execute",
+      },
       auth: {
         boardClaimTtlMinutes: 45,
         cliChallengeTtlMinutes: 15,
@@ -120,6 +128,7 @@ describe("updateAction", () => {
     vi.mocked(readInstanceConfig).mockResolvedValue(current);
     vi.mocked(writeInstanceConfig).mockResolvedValue("/srv/paperai/config.json");
     vi.mocked(resolveApiUrlFromConfig).mockReturnValue("http://127.0.0.1:4100/api/v1");
+    vi.mocked(resolveRepoRoot).mockReturnValue("/srv/paperai");
 
     const stop = vi.fn(async () => {});
     vi.mocked(ensureEmbeddedDatabase).mockResolvedValue({
@@ -151,6 +160,9 @@ describe("updateAction", () => {
           webOrigin: "https://paperai.local",
           jwtSecret: "custom-secret",
         }),
+        gateway: expect.objectContaining({
+          openclawUrl: "https://gateway.paperai.local/execute",
+        }),
         auth: expect.objectContaining({
           boardClaimTtlMinutes: 45,
           cliChallengeTtlMinutes: 15,
@@ -162,6 +174,7 @@ describe("updateAction", () => {
       token: "token-1",
       apiUrl: "http://127.0.0.1:4100/api/v1",
     });
+    expect(resolveRepoRoot).toHaveBeenCalledWith(context.runtime.env);
     expect(ensureDatabaseSchema).toHaveBeenCalledWith(context.runtime);
     expect(ensureWebBuild).toHaveBeenCalledWith(context.runtime, { force: true });
     expect(stop).toHaveBeenCalledOnce();

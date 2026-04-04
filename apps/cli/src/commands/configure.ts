@@ -13,7 +13,7 @@ import { applyDataDirOverride, ensurePaperAiHome, resolveApiUrlFromConfig } from
 type ConfigureOptions = {
   config?: string;
   dataDir?: string;
-  section: "database" | "server" | "auth";
+  section: "database" | "server" | "gateway" | "auth";
   mode?: "embedded-postgres" | "postgres";
   databaseUrl?: string;
   embeddedDataDir?: string;
@@ -23,6 +23,7 @@ type ConfigureOptions = {
   port?: string;
   webOrigin?: string;
   jwtSecret?: string;
+  gatewayUrl?: string;
   boardClaimTtlMinutes?: string;
   cliChallengeTtlMinutes?: string;
   agentTokenTtlMinutes?: string;
@@ -33,6 +34,7 @@ function updateConfig(config: PaperAiConfig, options: ConfigureOptions): PaperAi
     ...config,
     database: { ...config.database, backup: { ...config.database.backup } },
     server: { ...config.server },
+    gateway: { ...config.gateway },
     auth: { ...config.auth },
   };
 
@@ -66,6 +68,12 @@ function updateConfig(config: PaperAiConfig, options: ConfigureOptions): PaperAi
     }
     if (options.jwtSecret) {
       next.server.jwtSecret = options.jwtSecret;
+    }
+  }
+
+  if (options.section === "gateway") {
+    if (options.gatewayUrl) {
+      next.gateway.openclawUrl = options.gatewayUrl;
     }
   }
 
@@ -126,6 +134,7 @@ export function registerConfigureCommands(program: Command, context: CommandCont
     .option("--port <port>", "server port")
     .option("--web-origin <url>", "allowed web origin")
     .option("--jwt-secret <secret>", "JWT secret")
+    .option("--gateway-url <url>", "OpenClaw gateway execute URL")
     .option("--board-claim-ttl-minutes <minutes>", "board claim token TTL")
     .option("--cli-challenge-ttl-minutes <minutes>", "CLI auth challenge TTL")
     .option("--agent-token-ttl-minutes <minutes>", "agent token TTL")

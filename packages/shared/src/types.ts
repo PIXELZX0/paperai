@@ -723,6 +723,10 @@ export interface PaperAiServerConfig {
   jwtSecret: string;
 }
 
+export interface PaperAiGatewayConfig {
+  openclawUrl: string;
+}
+
 export interface PaperAiAuthConfig {
   boardClaimTtlMinutes: number;
   cliChallengeTtlMinutes: number;
@@ -733,5 +737,6 @@ export interface PaperAiConfig {
   version: 1;
   database: PaperAiDatabaseConfig;
   server: PaperAiServerConfig;
+  gateway: PaperAiGatewayConfig;
   auth: PaperAiAuthConfig;
 }
