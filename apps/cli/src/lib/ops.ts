@@ -55,6 +55,50 @@ function findWorkspaceRoot(start: string): string | null {
   }
 }
 
+function listFallbackRepoRoots(env: NodeJS.ProcessEnv): string[] {
+  const candidates = new Set<string>();
+  const addCandidate = (candidate?: string) => {
+    const value = candidate?.trim();
+    if (!value) {
+      return;
+    }
+    candidates.add(path.resolve(value));
+  };
+
+  addCandidate(env.PWD);
+
+  const invokedScript = process.argv[1] ? path.resolve(process.argv[1]) : "";
+  if (invokedScript) {
+    const invocationName = path.basename(invokedScript);
+    if (invocationName === "paperai" || invocationName === "papercli" || invocationName.startsWith("index.")) {
+      addCandidate(path.dirname(invokedScript));
+    }
+  }
+
+  const homeDir = env.HOME?.trim();
+  if (homeDir) {
+    const home = path.resolve(homeDir);
+    const homeCandidates = [
+      "paperai",
+      "workspace/paperai",
+      "workspaces/paperai",
+      "projects/paperai",
+      "project/paperai",
+      "code/paperai",
+      "src/paperai",
+      "Desktop/paperai",
+      "Desktop/projects/paperai",
+      "Desktop/Projects/paperai",
+      "Desktop/프로젝트/paperai",
+    ];
+    for (const relativePath of homeCandidates) {
+      addCandidate(path.join(home, relativePath));
+    }
+  }
+
+  return [...candidates];
+}
+
 export function resolveRepoRoot(env: NodeJS.ProcessEnv = process.env): string {
   const overrideRoot = env.PAPERAI_REPO_ROOT?.trim();
   if (overrideRoot) {
@@ -71,6 +115,13 @@ export function resolveRepoRoot(env: NodeJS.ProcessEnv = process.env): string {
   const cwdWorkspace = findWorkspaceRoot(process.cwd());
   if (cwdWorkspace) {
     return cwdWorkspace;
+  }
+
+  for (const fallbackCandidate of listFallbackRepoRoots(env)) {
+    const discoveredWorkspace = findWorkspaceRoot(fallbackCandidate);
+    if (discoveredWorkspace) {
+      return discoveredWorkspace;
+    }
   }
 
   throw new CliError(
