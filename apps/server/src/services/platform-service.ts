@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { DomainEventBus } from "@paperai/core";
@@ -119,6 +120,53 @@ function buildDepartmentWorkSpecRelativePath(departmentSlug: string): string {
 function ensurePathInsideRoot(rootPath: string, targetPath: string): boolean {
   const relative = path.relative(rootPath, targetPath);
   return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function resolvePaperAiHomeDir(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.PAPERAI_HOME?.trim();
+  if (override && override.length > 0) {
+    return path.resolve(override);
+  }
+
+  const homeFromEnv = env.HOME?.trim();
+  const home = homeFromEnv && homeFromEnv.length > 0 ? homeFromEnv : os.homedir();
+  return path.resolve(home, ".paperai");
+}
+
+function sanitizeWorkspacePathSegment(input: string): string {
+  const normalized = input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "");
+  return normalized.length > 0 ? normalized.slice(0, 64) : "workspace";
+}
+
+function buildDefaultProjectWorkspaceCwd(projectId: string, workspaceName: string, env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(resolvePaperAiHomeDir(env), "workspaces", "projects", projectId, sanitizeWorkspacePathSegment(workspaceName));
+}
+
+function buildDefaultExecutionWorkspaceCwd(
+  workspaceName: string,
+  input: { projectId?: string | null; issueId?: string | null },
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return path.join(
+    resolvePaperAiHomeDir(env),
+    "workspaces",
+    "executions",
+    input.projectId ?? "unscoped",
+    input.issueId ?? "general",
+    sanitizeWorkspacePathSegment(workspaceName),
+  );
+}
+
+async function resolveWorkspaceCwd(inputCwd: string | null | undefined, fallbackCwd: string): Promise<string> {
+  const provided = inputCwd?.trim();
+  const cwd = provided && provided.length > 0 ? provided : fallbackCwd;
+  await mkdir(cwd, { recursive: true });
+  return cwd;
 }
 
 function mapUser(row: typeof schema.users.$inferSelect): AuthUser {
@@ -2124,6 +2172,7 @@ export class PlatformService {
     },
   ): Promise<ProjectWorkspace> {
     await this.requirePermission(actorUserId, companyId, "project:write");
+    const cwd = await resolveWorkspaceCwd(input.cwd, buildDefaultProjectWorkspaceCwd(projectId, input.name));
 
     if (input.isPrimary) {
       await this.db
@@ -2138,7 +2187,7 @@ export class PlatformService {
         companyId,
         projectId,
         name: input.name,
-        cwd: input.cwd ?? null,
+        cwd,
         repoUrl: input.repoUrl ?? null,
         repoRef: input.repoRef ?? null,
         isPrimary: input.isPrimary,
@@ -2175,6 +2224,7 @@ export class PlatformService {
     },
   ): Promise<ExecutionWorkspace> {
     await this.requirePermission(actorUserId, companyId, "project:write");
+    const cwd = await resolveWorkspaceCwd(input.cwd, buildDefaultExecutionWorkspaceCwd(input.name, input));
     const [row] = await this.db
       .insert(schema.executionWorkspaces)
       .values({
@@ -2182,7 +2232,7 @@ export class PlatformService {
         projectId: input.projectId ?? null,
         issueId: input.issueId ?? null,
         name: input.name,
-        cwd: input.cwd ?? null,
+        cwd,
         repoUrl: input.repoUrl ?? null,
         baseRef: input.baseRef ?? null,
         branchName: input.branchName ?? null,

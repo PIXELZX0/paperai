@@ -2175,7 +2175,7 @@ function WorkspaceSection(props: {
             fields={[
               { name: "projectId", label: "Project", options: projectOptions, emptyLabel: "Select project" },
               { name: "name", label: "Name", placeholder: "main-repo" },
-              { name: "cwd", label: "Working directory", placeholder: "/workspace/paperai" },
+              { name: "cwd", label: "Working directory", placeholder: "~/.paperai/workspaces/projects/<project-id>/main-repo" },
               { name: "repoUrl", label: "Repository URL", placeholder: "https://github.com/example/repo" },
               { name: "repoRef", label: "Repository ref", placeholder: "main" },
               { name: "isPrimary", label: "Primary", options: [{ label: "true", value: "true" }, { label: "false", value: "false" }], emptyLabel: "false" },
@@ -2191,7 +2191,7 @@ function WorkspaceSection(props: {
               { name: "projectId", label: "Project", options: projectOptions, emptyLabel: "No project" },
               { name: "issueId", label: "Issue", options: issueOptions, emptyLabel: "No issue" },
               { name: "name", label: "Name", placeholder: "issue-42-branch" },
-              { name: "cwd", label: "Working directory", placeholder: "/workspace/paperai/issue-42" },
+              { name: "cwd", label: "Working directory", placeholder: "~/.paperai/workspaces/executions/<project-id>/<issue-id>/issue-42-branch" },
               { name: "repoUrl", label: "Repository URL", placeholder: "https://github.com/example/repo" },
               { name: "baseRef", label: "Base ref", placeholder: "main" },
               { name: "branchName", label: "Branch name", placeholder: "codex/issue-42" },
