@@ -64,4 +64,45 @@ describe("resolveRepoRoot", () => {
       }),
     ).toThrow(/PAPERAI_REPO_ROOT must point to a PaperAI workspace root/);
   });
+
+  it("uses config.repoRoot when set and cwd is outside a workspace", async () => {
+    const home = await createTempDir("paperai-config-home-");
+    const repo = path.join(home, "custom-repo");
+    await createWorkspaceRoot(repo);
+
+    const configDir = path.join(home, ".paperai");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(path.join(configDir, "config.json"), `${JSON.stringify({ repoRoot: repo }, null, 2)}\n`);
+
+    const outside = await createTempDir("paperai-config-outside-");
+    process.chdir(outside);
+    process.argv[1] = "/tmp/not-paperai-binary";
+
+    const resolved = resolveRepoRoot({
+      HOME: home,
+      PWD: outside,
+    });
+    expect(resolved).toBe(repo);
+  });
+
+  it("throws when config.repoRoot is set to a non-workspace path", async () => {
+    const home = await createTempDir("paperai-invalid-config-home-");
+    const invalidRepo = path.join(home, "invalid-repo");
+    await mkdir(invalidRepo, { recursive: true });
+
+    const configDir = path.join(home, ".paperai");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(path.join(configDir, "config.json"), `${JSON.stringify({ repoRoot: invalidRepo }, null, 2)}\n`);
+
+    const outside = await createTempDir("paperai-invalid-config-outside-");
+    process.chdir(outside);
+    process.argv[1] = "/tmp/not-paperai-binary";
+
+    expect(() =>
+      resolveRepoRoot({
+        HOME: home,
+        PWD: outside,
+      }),
+    ).toThrow(/config\.repoRoot/);
+  });
 });

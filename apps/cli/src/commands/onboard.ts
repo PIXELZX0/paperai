@@ -12,11 +12,18 @@ import {
   writeInstanceConfig,
 } from "../lib/config.js";
 import { printJson } from "../lib/output.js";
-import { applyDataDirOverride, ensurePaperAiHome, resolveApiUrlFromConfig } from "../lib/ops.js";
+import {
+  applyDataDirOverride,
+  ensurePaperAiHome,
+  resolveApiUrlFromConfig,
+  resolveRepoRoot,
+  validateRepoRootPath,
+} from "../lib/ops.js";
 
 type OnboardOptions = {
   config?: string;
   dataDir?: string;
+  workspaceRoot?: string;
   yes?: boolean;
   run?: boolean;
   tui?: boolean;
@@ -133,6 +140,10 @@ function mergeConfig(base: PaperAiConfig, options: OnboardOptions): PaperAiConfi
     next.gateway.openclawUrl = parseUrl(options.gatewayUrl, "gateway.openclawUrl");
   }
 
+  if (options.workspaceRoot) {
+    next.repoRoot = validateRepoRootPath(options.workspaceRoot, "workspace root");
+  }
+
   if (next.database.mode === "postgres" && !next.database.connectionString) {
     throw new CliError("database.connectionString is required when database.mode=postgres");
   }
@@ -179,6 +190,20 @@ function validateUrl(value: string | undefined, label: string): string | undefin
   }
 }
 
+function validateWorkspaceRoot(value: string | undefined): string | undefined {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) {
+    return "workspace root is required.";
+  }
+
+  try {
+    validateRepoRootPath(trimmed, "workspace root");
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : "workspace root must be a valid PaperAI workspace path.";
+  }
+}
+
 async function loadTuiModules(): Promise<TuiModules> {
   const prompts = await import("@clack/prompts");
   return {
@@ -191,6 +216,7 @@ async function promptOnboardConfig(
   configPath: string,
   baseConfig: PaperAiConfig,
   hasExistingConfig: boolean,
+  suggestedRepoRoot: string,
 ): Promise<PaperAiConfig | null> {
   const { p } = tui;
   const next = cloneConfig(baseConfig);
@@ -224,6 +250,17 @@ async function promptOnboardConfig(
   }
 
   const setupMode = setupModeChoice as SetupMode;
+
+  const workspaceRoot = await p.text({
+    message: "PaperAI workspace root",
+    initialValue: next.repoRoot ?? suggestedRepoRoot,
+    validate: validateWorkspaceRoot,
+  });
+  if (p.isCancel(workspaceRoot)) {
+    p.cancel("Onboarding cancelled.");
+    return null;
+  }
+  next.repoRoot = validateRepoRootPath(String(workspaceRoot).trim(), "workspace root");
 
   if (setupMode === "advanced") {
     p.log.step(pc.bold("Database"));
@@ -373,6 +410,7 @@ function printTuiSummary(
       `Database: ${config.database.mode}`,
       `Server: ${config.server.host}:${config.server.port}`,
       `Gateway: ${config.gateway.openclawUrl}`,
+      `Workspace: ${config.repoRoot ?? "(auto-detect)"}`,
     ].join("\n"),
     "Configuration saved",
   );
@@ -399,9 +437,19 @@ export async function onboardAction(context: CommandContext, options: OnboardOpt
   const tui = useTui ? await loadTuiModules() : null;
 
   let configured = baseConfig;
+  const suggestedRepoRoot = (() => {
+    if (baseConfig.repoRoot) {
+      return baseConfig.repoRoot;
+    }
+    try {
+      return resolveRepoRoot(context.runtime.env);
+    } catch {
+      return "";
+    }
+  })();
 
   if (tui) {
-    const prompted = await promptOnboardConfig(tui, configPath, baseConfig, existing !== null);
+    const prompted = await promptOnboardConfig(tui, configPath, baseConfig, existing !== null, suggestedRepoRoot);
     if (!prompted) {
       return;
     }
@@ -455,6 +503,7 @@ export async function onboardAction(context: CommandContext, options: OnboardOpt
     databaseMode: config.database.mode,
     embeddedDataDir: config.database.mode === "embedded-postgres" ? config.database.embeddedDataDir : null,
     gatewayUrl: config.gateway.openclawUrl,
+    repoRoot: config.repoRoot ?? null,
   });
 }
 
@@ -464,6 +513,7 @@ export function registerOnboardCommands(program: Command, context: CommandContex
     .description("Create or refresh the local PaperAI instance config")
     .option("--config <path>", "path to the PaperAI instance config")
     .option("--data-dir <path>", "PaperAI home directory (defaults to ~/.paperai)")
+    .option("--workspace-root <path>", "PaperAI workspace root containing pnpm-workspace.yaml")
     .option("-y, --yes", "accept defaults and start the local instance")
     .option("--run", "start the local instance after writing config")
     .option("--no-tui", "disable interactive onboarding prompts")

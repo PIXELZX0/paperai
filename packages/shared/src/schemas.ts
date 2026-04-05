@@ -383,6 +383,7 @@ export const paperAiAuthConfigSchema = z.object({
 
 export const paperAiConfigSchema = z.object({
   version: z.literal(1).default(1),
+  repoRoot: z.string().min(1).optional(),
   database: paperAiDatabaseConfigSchema,
   server: paperAiServerConfigSchema,
   gateway: paperAiGatewayConfigSchema.default({

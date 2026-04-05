@@ -735,6 +735,7 @@ export interface PaperAiAuthConfig {
 
 export interface PaperAiConfig {
   version: 1;
+  repoRoot?: string;
   database: PaperAiDatabaseConfig;
   server: PaperAiServerConfig;
   gateway: PaperAiGatewayConfig;

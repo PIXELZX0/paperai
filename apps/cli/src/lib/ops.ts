@@ -1,5 +1,5 @@
 import { access, mkdir, stat } from "node:fs/promises";
-import { constants as fsConstants, existsSync } from "node:fs";
+import { constants as fsConstants, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import type { PaperAiConfig } from "@paperai/shared";
@@ -55,6 +55,34 @@ function findWorkspaceRoot(start: string): string | null {
   }
 }
 
+export function validateRepoRootPath(repoRoot: string, source: string): string {
+  const resolved = path.resolve(repoRoot.trim());
+  const workspaceRoot = findWorkspaceRoot(resolved);
+  if (!workspaceRoot || workspaceRoot !== resolved) {
+    throw new CliError(
+      `${source} must point to a PaperAI workspace root containing pnpm-workspace.yaml (received: ${resolved}).`,
+    );
+  }
+  return resolved;
+}
+
+function readRepoRootFromConfig(configPath: string): string | null {
+  if (!existsSync(configPath)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, "utf8")) as { repoRoot?: unknown };
+    if (typeof parsed.repoRoot === "string" && parsed.repoRoot.trim().length > 0) {
+      return parsed.repoRoot.trim();
+    }
+  } catch {
+    // Ignore malformed config and continue with other resolution paths.
+  }
+
+  return null;
+}
+
 function listFallbackRepoRoots(env: NodeJS.ProcessEnv): string[] {
   const candidates = new Set<string>();
   const addCandidate = (candidate?: string) => {
@@ -102,14 +130,13 @@ function listFallbackRepoRoots(env: NodeJS.ProcessEnv): string[] {
 export function resolveRepoRoot(env: NodeJS.ProcessEnv = process.env): string {
   const overrideRoot = env.PAPERAI_REPO_ROOT?.trim();
   if (overrideRoot) {
-    const resolved = path.resolve(overrideRoot);
-    const workspaceRoot = findWorkspaceRoot(resolved);
-    if (!workspaceRoot || workspaceRoot !== resolved) {
-      throw new CliError(
-        `PAPERAI_REPO_ROOT must point to a PaperAI workspace root containing pnpm-workspace.yaml (received: ${resolved}).`,
-      );
-    }
-    return resolved;
+    return validateRepoRootPath(overrideRoot, "PAPERAI_REPO_ROOT");
+  }
+
+  const configPath = getInstanceConfigPath(env);
+  const configuredRepoRoot = readRepoRootFromConfig(configPath);
+  if (configuredRepoRoot) {
+    return validateRepoRootPath(configuredRepoRoot, `config.repoRoot (${configPath})`);
   }
 
   const cwdWorkspace = findWorkspaceRoot(process.cwd());
