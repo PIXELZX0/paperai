@@ -47,6 +47,10 @@ interface TuiModules {
   p: PromptApi;
 }
 
+function getCliCommand(context: CommandContext): string {
+  return context.runtime.invocationName || "papercli";
+}
+
 function cloneConfig(base: PaperAiConfig): PaperAiConfig {
   return {
     ...base,
@@ -76,7 +80,8 @@ function parseUrl(rawValue: string, label: string): string {
 function ensureJwtSecret(config: PaperAiConfig): PaperAiConfig {
   const next = cloneConfig(config);
   if (next.server.jwtSecret === "change-me-paperai") {
-    next.server.jwtSecret = randomUUID().replaceAll("-", "") + randomUUID().replaceAll("-", "");
+    next.server.jwtSecret =
+      randomUUID().replaceAll("-", "") + randomUUID().replaceAll("-", "");
   }
   return next;
 }
@@ -90,7 +95,10 @@ function applyGatewayDefault(config: PaperAiConfig): PaperAiConfig {
   return next;
 }
 
-function mergeConfig(base: PaperAiConfig, options: OnboardOptions): PaperAiConfig {
+function mergeConfig(
+  base: PaperAiConfig,
+  options: OnboardOptions,
+): PaperAiConfig {
   const next = cloneConfig(base);
 
   if (options.mode) {
@@ -110,7 +118,10 @@ function mergeConfig(base: PaperAiConfig, options: OnboardOptions): PaperAiConfi
   }
 
   if (options.embeddedPort) {
-    next.database.embeddedPort = parsePositiveInteger(options.embeddedPort, "database.embeddedPort");
+    next.database.embeddedPort = parsePositiveInteger(
+      options.embeddedPort,
+      "database.embeddedPort",
+    );
   }
 
   if (options.backupDir) {
@@ -137,15 +148,23 @@ function mergeConfig(base: PaperAiConfig, options: OnboardOptions): PaperAiConfi
   }
 
   if (options.gatewayUrl) {
-    next.gateway.openclawUrl = parseUrl(options.gatewayUrl, "gateway.openclawUrl");
+    next.gateway.openclawUrl = parseUrl(
+      options.gatewayUrl,
+      "gateway.openclawUrl",
+    );
   }
 
   if (options.workspaceRoot) {
-    next.repoRoot = validateRepoRootPath(options.workspaceRoot, "workspace root");
+    next.repoRoot = validateRepoRootPath(
+      options.workspaceRoot,
+      "workspace root",
+    );
   }
 
   if (next.database.mode === "postgres" && !next.database.connectionString) {
-    throw new CliError("database.connectionString is required when database.mode=postgres");
+    throw new CliError(
+      "database.connectionString is required when database.mode=postgres",
+    );
   }
 
   return next;
@@ -158,35 +177,53 @@ function isRuntimeTty(stream: unknown): boolean {
   return "isTTY" in stream && (stream as { isTTY?: boolean }).isTTY === true;
 }
 
-function shouldUseTui(context: CommandContext, options: OnboardOptions): boolean {
+function shouldUseTui(
+  context: CommandContext,
+  options: OnboardOptions,
+): boolean {
   if (options.tui === false || options.yes === true) {
     return false;
   }
-  return context.runtime.stdin.isTTY === true && isRuntimeTty(context.runtime.stdout);
+  return (
+    context.runtime.stdin.isTTY === true && isRuntimeTty(context.runtime.stdout)
+  );
 }
 
-function validateRequired(value: string | undefined, label: string): string | undefined {
+function validateRequired(
+  value: string | undefined,
+  label: string,
+): string | undefined {
   if ((value ?? "").trim().length === 0) {
     return `${label} is required.`;
   }
   return undefined;
 }
 
-function validatePositiveInteger(value: string | undefined, label: string): string | undefined {
+function validatePositiveInteger(
+  value: string | undefined,
+  label: string,
+): string | undefined {
   try {
     parsePositiveInteger((value ?? "").trim(), label);
     return undefined;
   } catch (error) {
-    return error instanceof Error ? error.message : `${label} must be a positive integer.`;
+    return error instanceof Error
+      ? error.message
+      : `${label} must be a positive integer.`;
   }
 }
 
-function validateUrl(value: string | undefined, label: string): string | undefined {
+function validateUrl(
+  value: string | undefined,
+  label: string,
+): string | undefined {
   try {
     parseUrl((value ?? "").trim(), label);
     return undefined;
   } catch (error) {
-    return error instanceof Error ? error.message : `${label} must be a valid URL.`;
+    return error instanceof Error
+      ? error.message
+      : `${label} must be a valid URL.`;
   }
 }
 
@@ -200,7 +237,9 @@ function validateWorkspaceRoot(value: string | undefined): string | undefined {
     validateRepoRootPath(trimmed, "workspace root");
     return undefined;
   } catch (error) {
-    return error instanceof Error ? error.message : "workspace root must be a valid PaperAI workspace path.";
+    return error instanceof Error
+      ? error.message
+      : "workspace root must be a valid PaperAI workspace path.";
   }
 }
 
@@ -213,6 +252,7 @@ async function loadTuiModules(): Promise<TuiModules> {
 
 async function promptOnboardConfig(
   tui: TuiModules,
+  cliCommand: string,
   configPath: string,
   baseConfig: PaperAiConfig,
   hasExistingConfig: boolean,
@@ -221,10 +261,12 @@ async function promptOnboardConfig(
   const { p } = tui;
   const next = cloneConfig(baseConfig);
 
-  p.intro(pc.bgCyan(pc.black(" paperai onboard ")));
+  p.intro(pc.bgCyan(pc.black(` ${cliCommand} onboard `)));
   p.log.message(pc.dim(`Config path: ${configPath}`));
   if (hasExistingConfig) {
-    p.log.message(pc.dim("Existing config detected. Quickstart keeps the current values."));
+    p.log.message(
+      pc.dim("Existing config detected. Quickstart keeps the current values."),
+    );
   }
 
   const setupModeChoice = await p.select({
@@ -260,7 +302,10 @@ async function promptOnboardConfig(
     p.cancel("Onboarding cancelled.");
     return null;
   }
-  next.repoRoot = validateRepoRootPath(String(workspaceRoot).trim(), "workspace root");
+  next.repoRoot = validateRepoRootPath(
+    String(workspaceRoot).trim(),
+    "workspace root",
+  );
 
   if (setupMode === "advanced") {
     p.log.step(pc.bold("Database"));
@@ -289,8 +334,11 @@ async function promptOnboardConfig(
     if (next.database.mode === "postgres") {
       const connectionString = await p.text({
         message: "Postgres connection string",
-        initialValue: next.database.connectionString ?? "postgres://user:pass@localhost:5432/paperai",
-        validate: (value) => validateRequired(value, "database.connectionString"),
+        initialValue:
+          next.database.connectionString ??
+          "postgres://user:pass@localhost:5432/paperai",
+        validate: (value) =>
+          validateRequired(value, "database.connectionString"),
       });
       if (p.isCancel(connectionString)) {
         p.cancel("Onboarding cancelled.");
@@ -303,7 +351,8 @@ async function promptOnboardConfig(
       const embeddedDataDir = await p.text({
         message: "Embedded Postgres data directory",
         initialValue: next.database.embeddedDataDir,
-        validate: (value) => validateRequired(value, "database.embeddedDataDir"),
+        validate: (value) =>
+          validateRequired(value, "database.embeddedDataDir"),
       });
       if (p.isCancel(embeddedDataDir)) {
         p.cancel("Onboarding cancelled.");
@@ -314,13 +363,17 @@ async function promptOnboardConfig(
       const embeddedPort = await p.text({
         message: "Embedded Postgres port",
         initialValue: String(next.database.embeddedPort),
-        validate: (value) => validatePositiveInteger(value, "database.embeddedPort"),
+        validate: (value) =>
+          validatePositiveInteger(value, "database.embeddedPort"),
       });
       if (p.isCancel(embeddedPort)) {
         p.cancel("Onboarding cancelled.");
         return null;
       }
-      next.database.embeddedPort = parsePositiveInteger(String(embeddedPort ?? ""), "database.embeddedPort");
+      next.database.embeddedPort = parsePositiveInteger(
+        String(embeddedPort ?? ""),
+        "database.embeddedPort",
+      );
     }
 
     const backupDir = await p.text({
@@ -366,7 +419,10 @@ async function promptOnboardConfig(
       p.cancel("Onboarding cancelled.");
       return null;
     }
-    next.server.webOrigin = parseUrl(String(webOrigin ?? ""), "server.webOrigin");
+    next.server.webOrigin = parseUrl(
+      String(webOrigin ?? ""),
+      "server.webOrigin",
+    );
 
     const jwtSecret = await p.text({
       message: "JWT secret",
@@ -400,6 +456,7 @@ function printTuiSummary(
   configPath: string,
   apiUrl: string,
   profilePath: string,
+  cliCommand: string,
 ) {
   const { p } = tui;
   p.note(
@@ -417,39 +474,56 @@ function printTuiSummary(
 
   p.note(
     [
-      "Run: paperai run",
-      "Reconfigure: paperai configure --section <database|server|gateway|auth>",
-      "Diagnostics: paperai doctor",
+      `Run: ${cliCommand} run`,
+      `Reconfigure: ${cliCommand} configure --section <database|server|gateway|auth>`,
+      `Diagnostics: ${cliCommand} doctor`,
     ].join("\n"),
     "Next commands",
   );
 }
 
-export async function onboardAction(context: CommandContext, options: OnboardOptions) {
+export async function onboardAction(
+  context: CommandContext,
+  options: OnboardOptions,
+) {
+  const cliCommand = getCliCommand(context);
   applyDataDirOverride(context.runtime, options);
   await ensurePaperAiHome(context.runtime);
 
   const configPath = getInstanceConfigPath(context.runtime.env);
   const existing = await readInstanceConfig(context.runtime.env);
-  const baseConfig = mergeConfig(existing ?? defaultPaperAiConfig(context.runtime.env), options);
+  const baseConfig = mergeConfig(
+    existing ?? defaultPaperAiConfig(context.runtime.env),
+    options,
+  );
 
   const useTui = shouldUseTui(context, options);
   const tui = useTui ? await loadTuiModules() : null;
 
   let configured = baseConfig;
+  const detectedRepoRoot = (() => {
+    try {
+      return resolveRepoRoot(context.runtime.env);
+    } catch {
+      return null;
+    }
+  })();
   const suggestedRepoRoot = (() => {
     if (baseConfig.repoRoot) {
       return baseConfig.repoRoot;
     }
-    try {
-      return resolveRepoRoot(context.runtime.env);
-    } catch {
-      return "";
-    }
+    return detectedRepoRoot ?? "";
   })();
 
   if (tui) {
-    const prompted = await promptOnboardConfig(tui, configPath, baseConfig, existing !== null, suggestedRepoRoot);
+    const prompted = await promptOnboardConfig(
+      tui,
+      cliCommand,
+      configPath,
+      baseConfig,
+      existing !== null,
+      suggestedRepoRoot,
+    );
     if (!prompted) {
       return;
     }
@@ -457,7 +531,10 @@ export async function onboardAction(context: CommandContext, options: OnboardOpt
   }
 
   const config = ensureJwtSecret(applyGatewayDefault(configured));
-  const persistedConfigPath = await writeInstanceConfig(context.runtime.env, config);
+  const persistedConfigPath = await writeInstanceConfig(
+    context.runtime.env,
+    config,
+  );
   const apiUrl = resolveApiUrlFromConfig(config);
 
   const profile = await context.loadProfile();
@@ -490,7 +567,14 @@ export async function onboardAction(context: CommandContext, options: OnboardOpt
   }
 
   if (tui) {
-    printTuiSummary(tui, config, persistedConfigPath, apiUrl, profilePath);
+    printTuiSummary(
+      tui,
+      config,
+      persistedConfigPath,
+      apiUrl,
+      profilePath,
+      cliCommand,
+    );
     tui.p.outro("You're all set!");
     return;
   }
@@ -500,24 +584,44 @@ export async function onboardAction(context: CommandContext, options: OnboardOpt
     configPath: persistedConfigPath,
     profilePath,
     apiUrl,
+    runCommand: `${cliCommand} run`,
+    reconfigureCommand: `${cliCommand} configure --section <database|server|gateway|auth>`,
+    diagnosticsCommand: `${cliCommand} doctor`,
     databaseMode: config.database.mode,
-    embeddedDataDir: config.database.mode === "embedded-postgres" ? config.database.embeddedDataDir : null,
+    embeddedDataDir:
+      config.database.mode === "embedded-postgres"
+        ? config.database.embeddedDataDir
+        : null,
     gatewayUrl: config.gateway.openclawUrl,
     repoRoot: config.repoRoot ?? null,
   });
 }
 
-export function registerOnboardCommands(program: Command, context: CommandContext) {
+export function registerOnboardCommands(
+  program: Command,
+  context: CommandContext,
+) {
   program
     .command("onboard")
     .description("Create or refresh the local PaperAI instance config")
     .option("--config <path>", "path to the PaperAI instance config")
-    .option("--data-dir <path>", "PaperAI home directory (defaults to ~/.paperai)")
-    .option("--workspace-root <path>", "PaperAI workspace root containing pnpm-workspace.yaml")
+    .option(
+      "--data-dir <path>",
+      "PaperAI home directory (defaults to ~/.paperai)",
+    )
+    .option(
+      "--workspace-root <path>",
+      "PaperAI workspace root containing pnpm-workspace.yaml",
+    )
     .option("-y, --yes", "accept defaults and start the local instance")
     .option("--run", "start the local instance after writing config")
     .option("--no-tui", "disable interactive onboarding prompts")
-    .addOption(new Option("--mode <mode>", "database mode").choices(["embedded-postgres", "postgres"]))
+    .addOption(
+      new Option("--mode <mode>", "database mode").choices([
+        "embedded-postgres",
+        "postgres",
+      ]),
+    )
     .option("--database-url <url>", "external Postgres connection string")
     .option("--embedded-data-dir <path>", "embedded Postgres data directory")
     .option("--embedded-port <port>", "embedded Postgres TCP port")

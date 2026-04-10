@@ -9,7 +9,11 @@ import { runCli } from "./index.js";
 class MemoryWritable extends Writable {
   private readonly chunks: string[] = [];
 
-  override _write(chunk: Buffer | string, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+  override _write(
+    chunk: Buffer | string,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ) {
     this.chunks.push(chunk.toString());
     callback();
   }
@@ -22,7 +26,9 @@ class MemoryWritable extends Writable {
 const tempDirs: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
+  );
   tempDirs.length = 0;
 });
 
@@ -41,6 +47,7 @@ async function executeCli(input: {
   profile?: Record<string, string>;
   stdinText?: string;
   fetchImpl?: typeof fetch;
+  invocationName?: string;
 }) {
   const root = await mkdtemp(path.join(os.tmpdir(), "papercli-test-"));
   tempDirs.push(root);
@@ -60,15 +67,18 @@ async function executeCli(input: {
   const stdout = new MemoryWritable();
   const stderr = new MemoryWritable();
   const stdin = Readable.from(input.stdinText ? [input.stdinText] : []);
-  (stdin as Readable & { isTTY?: boolean }).isTTY = input.stdinText === undefined;
+  (stdin as Readable & { isTTY?: boolean }).isTTY =
+    input.stdinText === undefined;
 
   const exitCode = await runCli(input.argv, {
     env,
     stdout,
     stderr,
     stdin: stdin as Readable & { isTTY?: boolean },
-    fetchImpl: input.fetchImpl ?? (async () => jsonResponse({ ok: true })) as typeof fetch,
-    invocationName: "papercli",
+    fetchImpl:
+      input.fetchImpl ??
+      ((async () => jsonResponse({ ok: true })) as typeof fetch),
+    invocationName: input.invocationName ?? "papercli",
   });
 
   return {
@@ -81,7 +91,9 @@ async function executeCli(input: {
 describe("papercli", () => {
   it("prefers flag values over env and profile values", async () => {
     const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
-      expect(String(url)).toBe("http://flag.example/api/v1/tasks?companyId=flag-company");
+      expect(String(url)).toBe(
+        "http://flag.example/api/v1/tasks?companyId=flag-company",
+      );
       expect(init?.headers).toMatchObject({
         authorization: "Bearer flag-token",
       });
@@ -89,7 +101,16 @@ describe("papercli", () => {
     });
 
     const result = await executeCli({
-      argv: ["task", "list", "--api-url", "http://flag.example/api/v1", "--token", "flag-token", "--company", "flag-company"],
+      argv: [
+        "task",
+        "list",
+        "--api-url",
+        "http://flag.example/api/v1",
+        "--token",
+        "flag-token",
+        "--company",
+        "flag-company",
+      ],
       env: {
         PAPERAI_API_URL: "http://env.example/api/v1",
         PAPERAI_TOKEN: "env-token",
@@ -109,7 +130,9 @@ describe("papercli", () => {
 
   it("falls back to env values before the saved profile", async () => {
     const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
-      expect(String(url)).toBe("http://env.example/api/v1/tasks?companyId=env-company");
+      expect(String(url)).toBe(
+        "http://env.example/api/v1/tasks?companyId=env-company",
+      );
       expect(init?.headers).toMatchObject({
         authorization: "Bearer env-token",
       });
@@ -150,12 +173,35 @@ describe("papercli", () => {
     });
 
     const result = await executeCli({
-      argv: ["auth", "login", "--email", "user@example.com", "--password", "password123"],
+      argv: [
+        "auth",
+        "login",
+        "--email",
+        "user@example.com",
+        "--password",
+        "password123",
+      ],
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 
     expect(result.exitCode).toBe(0);
     expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("prints next-step commands using the active onboarding binary", async () => {
+    const result = await executeCli({
+      argv: ["onboard", "--no-tui"],
+      invocationName: "paperai",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      runCommand: "paperai run",
+      reconfigureCommand:
+        "paperai configure --section <database|server|gateway|auth>",
+      diagnosticsCommand: "paperai doctor",
+    });
   });
 
   it("reads comment bodies from --body, --body-file, and stdin", async () => {
@@ -311,7 +357,15 @@ describe("papercli", () => {
     });
 
     await executeCli({
-      argv: ["approval", "resolve", "approval-1", "--status", "approved", "--resolution-notes", "Looks good"],
+      argv: [
+        "approval",
+        "resolve",
+        "approval-1",
+        "--status",
+        "approved",
+        "--resolution-notes",
+        "Looks good",
+      ],
       env: {
         PAPERAI_TOKEN: "token",
       },
@@ -337,7 +391,9 @@ describe("papercli", () => {
 
   it("keeps the legacy aliases wired to the new command implementations", async () => {
     const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
-      expect(String(url)).toBe("http://localhost:3001/api/v1/tasks?companyId=company-1");
+      expect(String(url)).toBe(
+        "http://localhost:3001/api/v1/tasks?companyId=company-1",
+      );
       expect(init?.method).toBe("POST");
       expect(JSON.parse(String(init?.body))).toMatchObject({
         title: "Write docs",
@@ -369,7 +425,17 @@ describe("papercli", () => {
     });
 
     const result = await executeCli({
-      argv: ["task:create", "--company", "company-1", "--title", "Write docs", "--description", "Document the system", "--assignee", "agent-1"],
+      argv: [
+        "task:create",
+        "--company",
+        "company-1",
+        "--title",
+        "Write docs",
+        "--description",
+        "Document the system",
+        "--assignee",
+        "agent-1",
+      ],
       env: {
         PAPERAI_TOKEN: "token",
       },
@@ -397,7 +463,15 @@ describe("papercli", () => {
     };
 
     await executeCli({
-      argv: ["workspace", "create-project", "--project", "project-1", "--name", "main", "--primary"],
+      argv: [
+        "workspace",
+        "create-project",
+        "--project",
+        "project-1",
+        "--name",
+        "main",
+        "--primary",
+      ],
       env,
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
@@ -409,7 +483,16 @@ describe("papercli", () => {
     });
 
     await executeCli({
-      argv: ["secret", "create", "--name", "OPENAI_API_KEY", "--value", "sk-test", "--value-hint", "sk-...test"],
+      argv: [
+        "secret",
+        "create",
+        "--name",
+        "OPENAI_API_KEY",
+        "--value",
+        "sk-test",
+        "--value-hint",
+        "sk-...test",
+      ],
       env,
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
