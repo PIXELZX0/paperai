@@ -1,4 +1,6 @@
-const apiUrl = (process.env.PAPERAI_API_URL ?? "http://127.0.0.1:3001/api/v1").replace(/\/$/, "");
+const apiUrl = (
+  process.env.PAPERAI_API_URL ?? "http://127.0.0.1:3001/api/v1"
+).replace(/\/$/, "");
 const token = process.env.PAPERAI_TOKEN;
 const companyId = process.env.PAPERAI_COMPANY_ID;
 const pluginId = process.env.PAPERAI_PLUGIN_ID;
@@ -32,11 +34,15 @@ async function main() {
   const checks = await Promise.all([
     request(`/org-tree?companyId=${encodeURIComponent(companyId!)}`),
     request(`/costs/overview?companyId=${encodeURIComponent(companyId!)}`),
-    request(`/costs/finance-events?companyId=${encodeURIComponent(companyId!)}`),
+    request(
+      `/costs/finance-events?companyId=${encodeURIComponent(companyId!)}`,
+    ),
     request(`/costs/quota-windows?companyId=${encodeURIComponent(companyId!)}`),
     request(`/skills?companyId=${encodeURIComponent(companyId!)}`),
     request(`/secrets?companyId=${encodeURIComponent(companyId!)}`),
-    request(`/execution-workspaces?companyId=${encodeURIComponent(companyId!)}`),
+    request(
+      `/execution-workspaces?companyId=${encodeURIComponent(companyId!)}`,
+    ),
     request(`/companies/${encodeURIComponent(companyId!)}/join-requests`),
   ]);
 
@@ -51,7 +57,9 @@ async function main() {
     joinRequests: checks[7],
     plugin: pluginId
       ? {
-          health: await request(`/plugins/${encodeURIComponent(pluginId)}/health`),
+          health: await request(
+            `/plugins/${encodeURIComponent(pluginId)}/health`,
+          ),
           ui: await request(`/plugins/${encodeURIComponent(pluginId)}/ui`),
         }
       : null,
@@ -92,3 +100,5 @@ main().catch((error) => {
   console.error(error instanceof Error ? error.message : error);
   process.exit(1);
 });
+
+export {};

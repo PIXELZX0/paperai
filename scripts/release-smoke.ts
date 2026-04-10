@@ -1,4 +1,6 @@
-const baseUrl = (process.env.PAPERAI_API_URL ?? "http://127.0.0.1:3001/api/v1").replace(/\/$/, "");
+const baseUrl = (
+  process.env.PAPERAI_API_URL ?? "http://127.0.0.1:3001/api/v1"
+).replace(/\/$/, "");
 const token = process.env.PAPERAI_TOKEN ?? null;
 const companyId = process.env.PAPERAI_COMPANY_ID ?? null;
 
@@ -38,14 +40,30 @@ async function main() {
   let extended: Record<string, unknown> | null = null;
   if (token && companyId) {
     extended = {
-      orgTree: await request(`/org-tree?companyId=${encodeURIComponent(companyId)}`),
-      costOverview: await request(`/costs/overview?companyId=${encodeURIComponent(companyId)}`),
-      financeEvents: await request(`/costs/finance-events?companyId=${encodeURIComponent(companyId)}`),
-      quotaWindows: await request(`/costs/quota-windows?companyId=${encodeURIComponent(companyId)}`),
-      skills: await request(`/skills?companyId=${encodeURIComponent(companyId)}`),
-      plugins: await request(`/plugins?companyId=${encodeURIComponent(companyId)}`),
-      executionWorkspaces: await request(`/execution-workspaces?companyId=${encodeURIComponent(companyId)}`),
-      joinRequests: await request(`/companies/${encodeURIComponent(companyId)}/join-requests`),
+      orgTree: await request(
+        `/org-tree?companyId=${encodeURIComponent(companyId)}`,
+      ),
+      costOverview: await request(
+        `/costs/overview?companyId=${encodeURIComponent(companyId)}`,
+      ),
+      financeEvents: await request(
+        `/costs/finance-events?companyId=${encodeURIComponent(companyId)}`,
+      ),
+      quotaWindows: await request(
+        `/costs/quota-windows?companyId=${encodeURIComponent(companyId)}`,
+      ),
+      skills: await request(
+        `/skills?companyId=${encodeURIComponent(companyId)}`,
+      ),
+      plugins: await request(
+        `/plugins?companyId=${encodeURIComponent(companyId)}`,
+      ),
+      executionWorkspaces: await request(
+        `/execution-workspaces?companyId=${encodeURIComponent(companyId)}`,
+      ),
+      joinRequests: await request(
+        `/companies/${encodeURIComponent(companyId)}/join-requests`,
+      ),
     };
   }
 
@@ -69,3 +87,5 @@ main().catch((error) => {
   console.error(error instanceof Error ? error.message : error);
   process.exit(1);
 });
+
+export {};
