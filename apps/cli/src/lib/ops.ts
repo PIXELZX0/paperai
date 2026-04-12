@@ -1,9 +1,18 @@
 import { access, mkdir, stat } from "node:fs/promises";
-import { constants as fsConstants, existsSync, readFileSync } from "node:fs";
+import {
+  constants as fsConstants,
+  existsSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import type { PaperAiConfig } from "@paperai/shared";
-import { ensureEmbeddedPostgres, type EmbeddedPostgresHandle } from "@paperai/db";
+import {
+  ensureEmbeddedPostgres,
+  type EmbeddedPostgresHandle,
+} from "@paperai/db";
 import type { CliRuntime } from "./runtime.js";
 import { CliError } from "./errors.js";
 import { getInstanceConfigPath, getPaperAiHomeDir } from "./config.js";
@@ -13,7 +22,18 @@ export interface OpsOptionsLike {
   dataDir?: string;
 }
 
-export function applyDataDirOverride(runtime: CliRuntime, options: OpsOptionsLike) {
+const DEFAULT_PNPM_WORKSPACE_YAML = [
+  "packages:",
+  "  - apps/*",
+  "  - packages/*",
+  "  - packages/adapters/*",
+  "",
+].join("\n");
+
+export function applyDataDirOverride(
+  runtime: CliRuntime,
+  options: OpsOptionsLike,
+) {
   const rawConfigPath = options.config?.trim();
   if (rawConfigPath) {
     runtime.env.PAPERAI_CONFIG = path.resolve(rawConfigPath);
@@ -66,14 +86,59 @@ export function validateRepoRootPath(repoRoot: string, source: string): string {
   return resolved;
 }
 
+export function validateRepoRootCandidatePath(
+  repoRoot: string,
+  source: string,
+): string {
+  const resolved = path.resolve(repoRoot.trim());
+  const workspaceRoot = findWorkspaceRoot(resolved);
+
+  if (workspaceRoot === resolved) {
+    return resolved;
+  }
+
+  let stats: ReturnType<typeof statSync>;
+  try {
+    stats = statSync(resolved);
+  } catch {
+    throw new CliError(
+      `${source} must point to an existing directory (received: ${resolved}).`,
+    );
+  }
+
+  if (!stats.isDirectory()) {
+    throw new CliError(
+      `${source} must point to a directory (received: ${resolved}).`,
+    );
+  }
+
+  return resolved;
+}
+
+export function ensureWorkspaceManifest(repoRoot: string): string {
+  const resolved = path.resolve(repoRoot.trim());
+  const manifestPath = path.join(resolved, "pnpm-workspace.yaml");
+
+  if (!existsSync(manifestPath)) {
+    writeFileSync(manifestPath, DEFAULT_PNPM_WORKSPACE_YAML, "utf8");
+  }
+
+  return manifestPath;
+}
+
 function readRepoRootFromConfig(configPath: string): string | null {
   if (!existsSync(configPath)) {
     return null;
   }
 
   try {
-    const parsed = JSON.parse(readFileSync(configPath, "utf8")) as { repoRoot?: unknown };
-    if (typeof parsed.repoRoot === "string" && parsed.repoRoot.trim().length > 0) {
+    const parsed = JSON.parse(readFileSync(configPath, "utf8")) as {
+      repoRoot?: unknown;
+    };
+    if (
+      typeof parsed.repoRoot === "string" &&
+      parsed.repoRoot.trim().length > 0
+    ) {
       return parsed.repoRoot.trim();
     }
   } catch {
@@ -98,7 +163,11 @@ function listFallbackRepoRoots(env: NodeJS.ProcessEnv): string[] {
   const invokedScript = process.argv[1] ? path.resolve(process.argv[1]) : "";
   if (invokedScript) {
     const invocationName = path.basename(invokedScript);
-    if (invocationName === "paperai" || invocationName === "papercli" || invocationName.startsWith("index.")) {
+    if (
+      invocationName === "paperai" ||
+      invocationName === "papercli" ||
+      invocationName.startsWith("index.")
+    ) {
       addCandidate(path.dirname(invokedScript));
     }
   }
@@ -136,7 +205,10 @@ export function resolveRepoRoot(env: NodeJS.ProcessEnv = process.env): string {
   const configPath = getInstanceConfigPath(env);
   const configuredRepoRoot = readRepoRootFromConfig(configPath);
   if (configuredRepoRoot) {
-    return validateRepoRootPath(configuredRepoRoot, `config.repoRoot (${configPath})`);
+    return validateRepoRootPath(
+      configuredRepoRoot,
+      `config.repoRoot (${configPath})`,
+    );
   }
 
   const cwdWorkspace = findWorkspaceRoot(process.cwd());
@@ -211,7 +283,11 @@ export async function runProcess(
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
-      stdio: ["ignore", stdoutMode === "inherit" ? "inherit" : "pipe", "inherit"],
+      stdio: [
+        "ignore",
+        stdoutMode === "inherit" ? "inherit" : "pipe",
+        "inherit",
+      ],
     });
 
     let stdout = "";
@@ -224,7 +300,12 @@ export async function runProcess(
     child.on("error", reject);
     child.on("close", (code) => {
       if (code !== 0) {
-        reject(new CliError(`Command failed: ${command} ${args.join(" ")}`, code ?? 1));
+        reject(
+          new CliError(
+            `Command failed: ${command} ${args.join(" ")}`,
+            code ?? 1,
+          ),
+        );
         return;
       }
       resolve({ stdout });
@@ -240,7 +321,10 @@ export async function ensureDatabaseSchema(runtime: CliRuntime) {
   });
 }
 
-export async function ensureWebBuild(runtime: CliRuntime, options: { force?: boolean } = {}) {
+export async function ensureWebBuild(
+  runtime: CliRuntime,
+  options: { force?: boolean } = {},
+) {
   const repoRoot = resolveRepoRoot(runtime.env);
   const webDistDir = path.join(repoRoot, "apps/web/dist/index.html");
   if (!options.force && (await pathExists(webDistDir))) {
@@ -258,7 +342,10 @@ export async function ensureWebBuild(runtime: CliRuntime, options: { force?: boo
   });
 }
 
-export async function resolveBackupPath(config: PaperAiConfig, fileName?: string): Promise<string> {
+export async function resolveBackupPath(
+  config: PaperAiConfig,
+  fileName?: string,
+): Promise<string> {
   const dir = config.database.backup.dir;
   await ensureWritableDirectory(dir);
   if (fileName && path.isAbsolute(fileName)) {
@@ -275,21 +362,34 @@ export async function ensurePgDumpAvailable(runtime: CliRuntime) {
       stdout: "pipe",
     });
   } catch {
-    throw new CliError("`pg_dump` is required for `paperai db:backup` but was not found in PATH.");
+    throw new CliError(
+      "`pg_dump` is required for `paperai db:backup` but was not found in PATH.",
+    );
   }
 }
 
-export async function createDatabaseBackup(runtime: CliRuntime, connectionString: string, outputPath: string) {
-  await runProcess(runtime, "pg_dump", ["--dbname", connectionString, "--file", outputPath], {
-    env: runtime.env,
-  });
+export async function createDatabaseBackup(
+  runtime: CliRuntime,
+  connectionString: string,
+  outputPath: string,
+) {
+  await runProcess(
+    runtime,
+    "pg_dump",
+    ["--dbname", connectionString, "--file", outputPath],
+    {
+      env: runtime.env,
+    },
+  );
 }
 
 export async function ensurePaperAiHome(runtime: CliRuntime) {
   await ensureWritableDirectory(getPaperAiHomeDir(runtime.env));
 }
 
-export async function readDirectorySummary(targetPath: string): Promise<string> {
+export async function readDirectorySummary(
+  targetPath: string,
+): Promise<string> {
   try {
     const info = await stat(targetPath);
     if (info.isDirectory()) {

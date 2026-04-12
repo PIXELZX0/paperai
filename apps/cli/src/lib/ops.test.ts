@@ -1,8 +1,19 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveRepoRoot } from "./ops.js";
+import {
+  ensureWorkspaceManifest,
+  resolveRepoRoot,
+  validateRepoRootCandidatePath,
+} from "./ops.js";
 
 const tempDirs: string[] = [];
 let originalCwd = process.cwd();
@@ -11,7 +22,9 @@ let originalArgv1 = process.argv[1];
 afterEach(async () => {
   process.chdir(originalCwd);
   process.argv[1] = originalArgv1;
-  await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
+  );
   tempDirs.length = 0;
 });
 
@@ -23,7 +36,10 @@ async function createTempDir(prefix: string) {
 
 async function createWorkspaceRoot(root: string) {
   await mkdir(root, { recursive: true });
-  await writeFile(path.join(root, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n");
+  await writeFile(
+    path.join(root, "pnpm-workspace.yaml"),
+    "packages:\n  - apps/*\n",
+  );
 }
 
 describe("resolveRepoRoot", () => {
@@ -35,7 +51,10 @@ describe("resolveRepoRoot", () => {
     await mkdir(nested, { recursive: true });
     process.chdir(nested);
 
-    const resolved = resolveRepoRoot({});
+    const resolved = resolveRepoRoot({
+      HOME: root,
+      PWD: nested,
+    });
     expect(await realpath(resolved)).toBe(await realpath(root));
   });
 
@@ -72,7 +91,10 @@ describe("resolveRepoRoot", () => {
 
     const configDir = path.join(home, ".paperai");
     await mkdir(configDir, { recursive: true });
-    await writeFile(path.join(configDir, "config.json"), `${JSON.stringify({ repoRoot: repo }, null, 2)}\n`);
+    await writeFile(
+      path.join(configDir, "config.json"),
+      `${JSON.stringify({ repoRoot: repo }, null, 2)}\n`,
+    );
 
     const outside = await createTempDir("paperai-config-outside-");
     process.chdir(outside);
@@ -92,7 +114,10 @@ describe("resolveRepoRoot", () => {
 
     const configDir = path.join(home, ".paperai");
     await mkdir(configDir, { recursive: true });
-    await writeFile(path.join(configDir, "config.json"), `${JSON.stringify({ repoRoot: invalidRepo }, null, 2)}\n`);
+    await writeFile(
+      path.join(configDir, "config.json"),
+      `${JSON.stringify({ repoRoot: invalidRepo }, null, 2)}\n`,
+    );
 
     const outside = await createTempDir("paperai-invalid-config-outside-");
     process.chdir(outside);
@@ -104,5 +129,22 @@ describe("resolveRepoRoot", () => {
         PWD: outside,
       }),
     ).toThrow(/config\.repoRoot/);
+  });
+
+  it("accepts an existing directory as a workspace root candidate", async () => {
+    const root = await createTempDir("paperai-candidate-root-");
+
+    expect(validateRepoRootCandidatePath(root, "workspace root")).toBe(root);
+  });
+
+  it("creates pnpm-workspace.yaml for a valid workspace root candidate", async () => {
+    const root = await createTempDir("paperai-manifest-root-");
+
+    const manifestPath = ensureWorkspaceManifest(root);
+
+    expect(await readFile(manifestPath, "utf8")).toBe(
+      "packages:\n  - apps/*\n  - packages/*\n  - packages/adapters/*\n",
+    );
+    expect(resolveRepoRoot({ PAPERAI_REPO_ROOT: root })).toBe(root);
   });
 });

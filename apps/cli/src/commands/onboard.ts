@@ -14,10 +14,11 @@ import {
 import { printJson } from "../lib/output.js";
 import {
   applyDataDirOverride,
+  ensureWorkspaceManifest,
   ensurePaperAiHome,
   resolveApiUrlFromConfig,
   resolveRepoRoot,
-  validateRepoRootPath,
+  validateRepoRootCandidatePath,
 } from "../lib/ops.js";
 
 type OnboardOptions = {
@@ -155,10 +156,11 @@ function mergeConfig(
   }
 
   if (options.workspaceRoot) {
-    next.repoRoot = validateRepoRootPath(
+    next.repoRoot = validateRepoRootCandidatePath(
       options.workspaceRoot,
       "workspace root",
     );
+    ensureWorkspaceManifest(next.repoRoot);
   }
 
   if (next.database.mode === "postgres" && !next.database.connectionString) {
@@ -234,7 +236,7 @@ function validateWorkspaceRoot(value: string | undefined): string | undefined {
   }
 
   try {
-    validateRepoRootPath(trimmed, "workspace root");
+    validateRepoRootCandidatePath(trimmed, "workspace root");
     return undefined;
   } catch (error) {
     return error instanceof Error
@@ -302,10 +304,11 @@ async function promptOnboardConfig(
     p.cancel("Onboarding cancelled.");
     return null;
   }
-  next.repoRoot = validateRepoRootPath(
+  next.repoRoot = validateRepoRootCandidatePath(
     String(workspaceRoot).trim(),
     "workspace root",
   );
+  ensureWorkspaceManifest(next.repoRoot);
 
   if (setupMode === "advanced") {
     p.log.step(pc.bold("Database"));
