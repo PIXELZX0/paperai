@@ -1,10 +1,10 @@
-import { access, mkdir, stat } from "node:fs/promises";
+import { access, mkdir, readdir, rm, stat } from "node:fs/promises";
 import {
   constants as fsConstants,
   existsSync,
+  readdirSync,
   readFileSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -29,6 +29,34 @@ const DEFAULT_PNPM_WORKSPACE_YAML = [
   "  - packages/adapters/*",
   "",
 ].join("\n");
+
+const DEFAULT_PAPERAI_REPO_URL = "https://github.com/PIXELZX0/paperai.git";
+const PAPERAI_ROOT_SENTINEL = path.join("apps", "server", "package.json");
+
+function isPaperAiRepoRoot(repoRoot: string): boolean {
+  const resolved = path.resolve(repoRoot);
+  const workspaceManifest = path.join(resolved, "pnpm-workspace.yaml");
+  const packageJsonPath = path.join(resolved, "package.json");
+  const sentinelPath = path.join(resolved, PAPERAI_ROOT_SENTINEL);
+
+  if (
+    !existsSync(workspaceManifest) ||
+    !existsSync(packageJsonPath) ||
+    !existsSync(sentinelPath)
+  ) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+      name?: unknown;
+      private?: unknown;
+    };
+    return parsed.name === "paperai" && parsed.private === true;
+  } catch {
+    return false;
+  }
+}
 
 export function applyDataDirOverride(
   runtime: CliRuntime,
@@ -63,7 +91,7 @@ function findWorkspaceRoot(start: string): string | null {
   let current = path.resolve(start);
 
   while (true) {
-    if (existsSync(path.join(current, "pnpm-workspace.yaml"))) {
+    if (isPaperAiRepoRoot(current)) {
       return current;
     }
 
@@ -80,7 +108,7 @@ export function validateRepoRootPath(repoRoot: string, source: string): string {
   const workspaceRoot = findWorkspaceRoot(resolved);
   if (!workspaceRoot || workspaceRoot !== resolved) {
     throw new CliError(
-      `${source} must point to a PaperAI workspace root containing pnpm-workspace.yaml (received: ${resolved}).`,
+      `${source} must point to a PaperAI repository checkout root containing pnpm-workspace.yaml, package.json, and ${PAPERAI_ROOT_SENTINEL} (received: ${resolved}).`,
     );
   }
   return resolved;
@@ -101,9 +129,7 @@ export function validateRepoRootCandidatePath(
   try {
     stats = statSync(resolved);
   } catch {
-    throw new CliError(
-      `${source} must point to an existing directory (received: ${resolved}).`,
-    );
+    return resolved;
   }
 
   if (!stats.isDirectory()) {
@@ -112,18 +138,102 @@ export function validateRepoRootCandidatePath(
     );
   }
 
-  return resolved;
-}
-
-export function ensureWorkspaceManifest(repoRoot: string): string {
-  const resolved = path.resolve(repoRoot.trim());
-  const manifestPath = path.join(resolved, "pnpm-workspace.yaml");
-
-  if (!existsSync(manifestPath)) {
-    writeFileSync(manifestPath, DEFAULT_PNPM_WORKSPACE_YAML, "utf8");
+  const entries = readdirSync(resolved);
+  if (entries.length === 0 || isRecoverableStubWorkspace(entries, resolved)) {
+    return resolved;
   }
 
-  return manifestPath;
+  throw new CliError(
+    `${source} must point to an existing PaperAI checkout, an empty directory, or a recoverable PaperAI bootstrap directory (received: ${resolved}).`,
+  );
+}
+
+function isRecoverableStubWorkspace(
+  entries: string[],
+  repoRoot: string,
+): boolean {
+  if (entries.length !== 1 || entries[0] !== "pnpm-workspace.yaml") {
+    return false;
+  }
+
+  const manifestPath = path.join(repoRoot, "pnpm-workspace.yaml");
+  try {
+    return readFileSync(manifestPath, "utf8") === DEFAULT_PNPM_WORKSPACE_YAML;
+  } catch {
+    return false;
+  }
+}
+
+async function clonePaperAiCheckout(
+  runtime: CliRuntime,
+  repoRoot: string,
+  repoUrl: string,
+) {
+  await mkdir(path.dirname(repoRoot), { recursive: true });
+  await runProcess(
+    runtime,
+    "git",
+    ["clone", "--depth", "1", repoUrl, repoRoot],
+    {
+      env: runtime.env,
+    },
+  );
+
+  if (!isPaperAiRepoRoot(repoRoot)) {
+    throw new CliError(
+      `Cloned repository is not a valid PaperAI checkout root: ${repoRoot}`,
+    );
+  }
+}
+
+export async function ensurePaperAiCheckout(
+  runtime: CliRuntime,
+  repoRoot: string,
+  options: { repoUrl?: string } = {},
+): Promise<string> {
+  const resolved = path.resolve(repoRoot.trim());
+  const repoUrl = options.repoUrl ?? DEFAULT_PAPERAI_REPO_URL;
+
+  if (isPaperAiRepoRoot(resolved)) {
+    return resolved;
+  }
+
+  try {
+    const existing = statSync(resolved);
+    if (!existing.isDirectory()) {
+      throw new CliError(
+        `PaperAI repository checkout root must be a directory (received: ${resolved}).`,
+      );
+    }
+  } catch (error) {
+    if (
+      !(error instanceof CliError) &&
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      await clonePaperAiCheckout(runtime, resolved, repoUrl);
+      return resolved;
+    }
+    throw error;
+  }
+
+  const entries = await readdir(resolved);
+  if (entries.length === 0) {
+    await clonePaperAiCheckout(runtime, resolved, repoUrl);
+    return resolved;
+  }
+
+  if (isRecoverableStubWorkspace(entries, resolved)) {
+    await rm(resolved, { recursive: true, force: true });
+    await clonePaperAiCheckout(runtime, resolved, repoUrl);
+    return resolved;
+  }
+
+  throw new CliError(
+    `PaperAI repository checkout root must be an existing PaperAI checkout or an empty directory. The target is non-empty and cannot be recovered automatically: ${resolved}`,
+  );
 }
 
 function readRepoRootFromConfig(configPath: string): string | null {
@@ -224,7 +334,7 @@ export function resolveRepoRoot(env: NodeJS.ProcessEnv = process.env): string {
   }
 
   throw new CliError(
-    "Could not locate the PaperAI workspace. Run this command from the PaperAI repository root or set PAPERAI_REPO_ROOT=/absolute/path/to/paperai.",
+    "Could not locate the PaperAI repository checkout. Run this command from the PaperAI repository root or set PAPERAI_REPO_ROOT=/absolute/path/to/paperai.",
   );
 }
 
@@ -268,7 +378,7 @@ export async function ensureEmbeddedDatabase(
 }
 
 export async function runProcess(
-  runtime: CliRuntime,
+  _runtime: CliRuntime,
   command: string,
   args: string[],
   options: {

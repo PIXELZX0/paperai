@@ -1,16 +1,19 @@
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { EventEmitter } from "node:events";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const { spawnMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn(),
+}));
+
+vi.mock("node:child_process", () => ({
+  spawn: spawnMock,
+}));
+
 import {
-  ensureWorkspaceManifest,
+  ensurePaperAiCheckout,
   resolveRepoRoot,
   validateRepoRootCandidatePath,
 } from "./ops.js";
@@ -19,9 +22,18 @@ const tempDirs: string[] = [];
 let originalCwd = process.cwd();
 let originalArgv1 = process.argv[1];
 
+const DEFAULT_PNPM_WORKSPACE_YAML = [
+  "packages:",
+  "  - apps/*",
+  "  - packages/*",
+  "  - packages/adapters/*",
+  "",
+].join("\n");
+
 afterEach(async () => {
   process.chdir(originalCwd);
   process.argv[1] = originalArgv1;
+  spawnMock.mockReset();
   await Promise.all(
     tempDirs.map((dir) => rm(dir, { recursive: true, force: true })),
   );
@@ -38,8 +50,40 @@ async function createWorkspaceRoot(root: string) {
   await mkdir(root, { recursive: true });
   await writeFile(
     path.join(root, "pnpm-workspace.yaml"),
-    "packages:\n  - apps/*\n",
+    DEFAULT_PNPM_WORKSPACE_YAML,
   );
+  await writeFile(
+    path.join(root, "package.json"),
+    `${JSON.stringify({ name: "paperai", private: true }, null, 2)}\n`,
+  );
+  await mkdir(path.join(root, "apps", "server"), { recursive: true });
+  await writeFile(
+    path.join(root, "apps", "server", "package.json"),
+    `${JSON.stringify({ name: "@paperai/server" }, null, 2)}\n`,
+  );
+}
+
+function installCloneMock() {
+  spawnMock.mockImplementation((command: string, args: string[]) => {
+    const child = new EventEmitter() as EventEmitter & {
+      stdout?: EventEmitter;
+    };
+
+    void (async () => {
+      if (command === "git" && args[0] === "clone") {
+        const target = args.at(-1);
+        if (!target) {
+          throw new Error("missing clone target");
+        }
+        await createWorkspaceRoot(String(target));
+      }
+      child.emit("close", 0);
+    })().catch((error) => {
+      child.emit("error", error);
+    });
+
+    return child;
+  });
 }
 
 describe("resolveRepoRoot", () => {
@@ -76,12 +120,19 @@ describe("resolveRepoRoot", () => {
 
   it("throws when PAPERAI_REPO_ROOT is set to a non-workspace path", async () => {
     const home = await createTempDir("paperai-invalid-root-");
+    await mkdir(home, { recursive: true });
+    await writeFile(
+      path.join(home, "pnpm-workspace.yaml"),
+      DEFAULT_PNPM_WORKSPACE_YAML,
+    );
 
     expect(() =>
       resolveRepoRoot({
         PAPERAI_REPO_ROOT: home,
       }),
-    ).toThrow(/PAPERAI_REPO_ROOT must point to a PaperAI workspace root/);
+    ).toThrow(
+      /PAPERAI_REPO_ROOT must point to a PaperAI repository checkout root/,
+    );
   });
 
   it("uses config.repoRoot when set and cwd is outside a workspace", async () => {
@@ -111,6 +162,10 @@ describe("resolveRepoRoot", () => {
     const home = await createTempDir("paperai-invalid-config-home-");
     const invalidRepo = path.join(home, "invalid-repo");
     await mkdir(invalidRepo, { recursive: true });
+    await writeFile(
+      path.join(invalidRepo, "pnpm-workspace.yaml"),
+      DEFAULT_PNPM_WORKSPACE_YAML,
+    );
 
     const configDir = path.join(home, ".paperai");
     await mkdir(configDir, { recursive: true });
@@ -137,14 +192,83 @@ describe("resolveRepoRoot", () => {
     expect(validateRepoRootCandidatePath(root, "workspace root")).toBe(root);
   });
 
-  it("creates pnpm-workspace.yaml for a valid workspace root candidate", async () => {
-    const root = await createTempDir("paperai-manifest-root-");
+  it("accepts a missing directory as a workspace root candidate", async () => {
+    const base = await createTempDir("paperai-candidate-missing-");
+    const root = path.join(base, "repo");
 
-    const manifestPath = ensureWorkspaceManifest(root);
+    expect(validateRepoRootCandidatePath(root, "workspace root")).toBe(root);
+  });
 
-    expect(await readFile(manifestPath, "utf8")).toBe(
-      "packages:\n  - apps/*\n  - packages/*\n  - packages/adapters/*\n",
+  it("rejects a populated directory that is not a PaperAI checkout", async () => {
+    const root = await createTempDir("paperai-candidate-invalid-");
+    await writeFile(path.join(root, "README.txt"), "not a repo\n");
+
+    expect(() => validateRepoRootCandidatePath(root, "workspace root")).toThrow(
+      /must point to an existing PaperAI checkout, an empty directory/,
+    );
+  });
+});
+
+describe("ensurePaperAiCheckout", () => {
+  it("does nothing when the target is already a valid PaperAI checkout", async () => {
+    const root = await createTempDir("paperai-existing-repo-");
+    await createWorkspaceRoot(root);
+
+    const runtime = { env: {}, stderr: process.stderr, stdout: process.stdout };
+    const resolved = await ensurePaperAiCheckout(runtime as never, root);
+
+    expect(resolved).toBe(root);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("clones into a missing target directory by default", async () => {
+    const base = await createTempDir("paperai-clone-base-");
+    const root = path.join(base, "checkout");
+    installCloneMock();
+
+    const runtime = { env: {}, stderr: process.stderr, stdout: process.stdout };
+    const resolved = await ensurePaperAiCheckout(runtime as never, root);
+
+    expect(resolved).toBe(root);
+    expect(spawnMock).toHaveBeenCalledOnce();
+    expect(spawnMock).toHaveBeenCalledWith(
+      "git",
+      [
+        "clone",
+        "--depth",
+        "1",
+        "https://github.com/PIXELZX0/paperai.git",
+        root,
+      ],
+      expect.any(Object),
     );
     expect(resolveRepoRoot({ PAPERAI_REPO_ROOT: root })).toBe(root);
+  });
+
+  it("replaces a recoverable stub directory with a real checkout", async () => {
+    const root = await createTempDir("paperai-stub-root-");
+    await writeFile(
+      path.join(root, "pnpm-workspace.yaml"),
+      DEFAULT_PNPM_WORKSPACE_YAML,
+    );
+    installCloneMock();
+
+    const runtime = { env: {}, stderr: process.stderr, stdout: process.stdout };
+    await ensurePaperAiCheckout(runtime as never, root);
+
+    expect(spawnMock).toHaveBeenCalledOnce();
+    expect(resolveRepoRoot({ PAPERAI_REPO_ROOT: root })).toBe(root);
+  });
+
+  it("throws for a non-empty directory that is not recoverable", async () => {
+    const root = await createTempDir("paperai-nonrecoverable-");
+    await writeFile(path.join(root, "README.txt"), "not a repo\n");
+
+    const runtime = { env: {}, stderr: process.stderr, stdout: process.stdout };
+
+    await expect(ensurePaperAiCheckout(runtime as never, root)).rejects.toThrow(
+      /cannot be recovered automatically/,
+    );
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 });
