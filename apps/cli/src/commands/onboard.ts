@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { Command, Option } from "commander";
 import pc from "picocolors";
 import type { PaperAiConfig } from "@paperai/shared";
@@ -8,13 +9,14 @@ import {
   defaultPaperAiConfig,
   deriveGatewayUrlFromServer,
   getInstanceConfigPath,
+  getPaperAiHomeDir,
   readInstanceConfig,
   writeInstanceConfig,
 } from "../lib/config.js";
 import { printJson } from "../lib/output.js";
 import {
   applyDataDirOverride,
-  ensureWorkspaceManifest,
+  ensurePaperAiCheckout,
   ensurePaperAiHome,
   resolveApiUrlFromConfig,
   resolveRepoRoot,
@@ -158,9 +160,8 @@ function mergeConfig(
   if (options.workspaceRoot) {
     next.repoRoot = validateRepoRootCandidatePath(
       options.workspaceRoot,
-      "workspace root",
+      "repository checkout root",
     );
-    ensureWorkspaceManifest(next.repoRoot);
   }
 
   if (next.database.mode === "postgres" && !next.database.connectionString) {
@@ -232,17 +233,21 @@ function validateUrl(
 function validateWorkspaceRoot(value: string | undefined): string | undefined {
   const trimmed = (value ?? "").trim();
   if (!trimmed) {
-    return "workspace root is required.";
+    return "repository checkout root is required.";
   }
 
   try {
-    validateRepoRootCandidatePath(trimmed, "workspace root");
+    validateRepoRootCandidatePath(trimmed, "repository checkout root");
     return undefined;
   } catch (error) {
     return error instanceof Error
       ? error.message
-      : "workspace root must be a valid PaperAI workspace path.";
+      : "repository checkout root must be a valid PaperAI path.";
   }
+}
+
+function resolveManagedRepoRoot(env: NodeJS.ProcessEnv): string {
+  return path.join(getPaperAiHomeDir(env), "ws");
 }
 
 async function loadTuiModules(): Promise<TuiModules> {
@@ -296,7 +301,7 @@ async function promptOnboardConfig(
   const setupMode = setupModeChoice as SetupMode;
 
   const workspaceRoot = await p.text({
-    message: "PaperAI workspace root",
+    message: "PaperAI repository checkout root",
     initialValue: next.repoRoot ?? suggestedRepoRoot,
     validate: validateWorkspaceRoot,
   });
@@ -306,9 +311,8 @@ async function promptOnboardConfig(
   }
   next.repoRoot = validateRepoRootCandidatePath(
     String(workspaceRoot).trim(),
-    "workspace root",
+    "repository checkout root",
   );
-  ensureWorkspaceManifest(next.repoRoot);
 
   if (setupMode === "advanced") {
     p.log.step(pc.bold("Database"));
@@ -470,7 +474,7 @@ function printTuiSummary(
       `Database: ${config.database.mode}`,
       `Server: ${config.server.host}:${config.server.port}`,
       `Gateway: ${config.gateway.openclawUrl}`,
-      `Workspace: ${config.repoRoot ?? "(auto-detect)"}`,
+      `Repository root: ${config.repoRoot ?? "(auto-detect)"}`,
     ].join("\n"),
     "Configuration saved",
   );
@@ -515,7 +519,7 @@ export async function onboardAction(
     if (baseConfig.repoRoot) {
       return baseConfig.repoRoot;
     }
-    return detectedRepoRoot ?? "";
+    return detectedRepoRoot ?? resolveManagedRepoRoot(context.runtime.env);
   })();
 
   if (tui) {
@@ -531,6 +535,23 @@ export async function onboardAction(
       return;
     }
     configured = prompted;
+  }
+
+  if (!configured.repoRoot) {
+    configured = {
+      ...configured,
+      repoRoot: suggestedRepoRoot,
+    };
+  }
+
+  if (configured.repoRoot) {
+    configured = {
+      ...configured,
+      repoRoot: await ensurePaperAiCheckout(
+        context.runtime,
+        configured.repoRoot,
+      ),
+    };
   }
 
   const config = ensureJwtSecret(applyGatewayDefault(configured));
@@ -614,7 +635,7 @@ export function registerOnboardCommands(
     )
     .option(
       "--workspace-root <path>",
-      "PaperAI workspace root containing pnpm-workspace.yaml",
+      "PaperAI repository checkout root (existing checkout or empty target directory)",
     )
     .option("-y, --yes", "accept defaults and start the local instance")
     .option("--run", "start the local instance after writing config")
