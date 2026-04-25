@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   GOAL_LEVELS,
@@ -26,7 +26,13 @@ import {
 import { useNavigate, useParams } from "react-router-dom";
 import { InlineForm } from "../components/forms.js";
 import { Panel } from "../components/panel.js";
-import { API_BASE, api, createEventStream, loadSession, saveSession } from "../lib/api.js";
+import {
+  API_BASE,
+  api,
+  createEventStream,
+  loadSession,
+  saveSession,
+} from "../lib/api.js";
 
 type LiveEvent = {
   type: string;
@@ -59,18 +65,85 @@ type OrgTree = {
   agents: OrgTreeNode[];
 };
 
-type SectionId = "overview" | "org" | "costs" | "workspaces" | "issues" | "skills" | "plugins" | "secrets";
+type SectionId =
+  | "overview"
+  | "org"
+  | "costs"
+  | "workspaces"
+  | "issues"
+  | "skills"
+  | "plugins"
+  | "secrets";
 
-const SECTION_ITEMS: Array<{ id: SectionId; label: string; blurb: string }> = [
-  { id: "overview", label: "Overview", blurb: "Operate the company, team, goals, projects, issues, and live traffic." },
-  { id: "org", label: "Org", blurb: "Inspect the company org tree and export the board chart." },
-  { id: "costs", label: "Costs", blurb: "Track budget health with provider, project, agent, and biller rollups." },
-  { id: "workspaces", label: "Workspaces", blurb: "Provision project and execution workspaces for delivery streams." },
-  { id: "issues", label: "Issue Ops", blurb: "Manage documents, attachments, and work products for active issues." },
-  { id: "skills", label: "Skills", blurb: "Build a shared company skill library and scan local skill packs." },
-  { id: "plugins", label: "Plugins", blurb: "Install, enable, disable, upgrade, and exercise plugin capabilities." },
-  { id: "secrets", label: "Secrets", blurb: "Store local secrets for adapters, plugins, and company operations." },
+const SECTION_ITEMS: Array<{
+  id: SectionId;
+  label: string;
+  blurb: string;
+  glyph: string;
+}> = [
+  {
+    id: "overview",
+    label: "Overview",
+    glyph: "◌",
+    blurb:
+      "Operate the company, team, goals, projects, issues, and live traffic.",
+  },
+  {
+    id: "org",
+    label: "Org",
+    glyph: "⎔",
+    blurb: "Inspect the company org tree and export the board chart.",
+  },
+  {
+    id: "costs",
+    label: "Costs",
+    glyph: "$",
+    blurb:
+      "Track budget health with provider, project, agent, and biller rollups.",
+  },
+  {
+    id: "workspaces",
+    label: "Workspaces",
+    glyph: "⌘",
+    blurb: "Provision project and execution workspaces for delivery streams.",
+  },
+  {
+    id: "issues",
+    label: "Issue Ops",
+    glyph: "!",
+    blurb:
+      "Manage documents, attachments, and work products for active issues.",
+  },
+  {
+    id: "skills",
+    label: "Skills",
+    glyph: "✦",
+    blurb: "Build a shared company skill library and scan local skill packs.",
+  },
+  {
+    id: "plugins",
+    label: "Plugins",
+    glyph: "↗",
+    blurb:
+      "Install, enable, disable, upgrade, and exercise plugin capabilities.",
+  },
+  {
+    id: "secrets",
+    label: "Secrets",
+    glyph: "•",
+    blurb: "Store local secrets for adapters, plugins, and company operations.",
+  },
 ];
+
+type CommandAction = {
+  id: string;
+  group: string;
+  label: string;
+  blurb: string;
+  hint?: string;
+  active?: boolean;
+  run(): void;
+};
 
 const STATUS_TONES: Record<string, string> = {
   active: "bg-emerald-300/20 text-emerald-200",
@@ -107,7 +180,10 @@ function isSection(value: string | undefined): value is SectionId {
   return SECTION_ITEMS.some((item) => item.id === value);
 }
 
-function parseJsonField(input: string | undefined, fallback: Record<string, unknown> = {}) {
+function parseJsonField(
+  input: string | undefined,
+  fallback: Record<string, unknown> = {},
+) {
   if (!input?.trim()) {
     return fallback;
   }
@@ -119,14 +195,26 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const params = useParams();
   const session = useSession();
-  const section: SectionId = isSection(params.section) ? params.section : "overview";
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(() => session.selectedCompanyId ?? null);
-  const [selectedWorkspaceProjectId, setSelectedWorkspaceProjectId] = useState<string | null>(null);
+  const section: SectionId = isSection(params.section)
+    ? params.section
+    : "overview";
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(
+    () => session.selectedCompanyId ?? null,
+  );
+  const [selectedWorkspaceProjectId, setSelectedWorkspaceProjectId] = useState<
+    string | null
+  >(null);
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
-  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(
+    null,
+  );
   const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
-  const [pluginActionResult, setPluginActionResult] = useState<PluginRuntimeActionResult | null>(null);
+  const [commandQuery, setCommandQuery] = useState("");
+  const [activeCommandIndex, setActiveCommandIndex] = useState(0);
+  const [pluginActionResult, setPluginActionResult] =
+    useState<PluginRuntimeActionResult | null>(null);
+  const commandInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!session.token) {
@@ -135,31 +223,27 @@ export function DashboardPage() {
   }, [navigate, session.token]);
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setCommandPaletteOpen((current) => !current);
-      }
-      if (event.key === "Escape") {
-        setCommandPaletteOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
-  useEffect(() => {
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    if (section) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   }, [section]);
 
-  function persistSelectedCompany(companyId: string | null) {
-    setSelectedCompanyId(companyId);
-    saveSession({
-      token: session.token,
-      user: session.user,
-      selectedCompanyId: companyId,
-    });
-  }
+  const persistSelectedCompany = useCallback(
+    (companyId: string | null) => {
+      setSelectedCompanyId(companyId);
+      saveSession({
+        token: session.token,
+        user: session.user,
+        selectedCompanyId: companyId,
+      });
+    },
+    [session.token, session.user],
+  );
+
+  const signOut = useCallback(() => {
+    saveSession({ token: null, user: null, selectedCompanyId: null });
+    navigate("/");
+  }, [navigate]);
 
   const companies = useQuery({
     queryKey: ["companies", session.token],
@@ -177,11 +261,14 @@ export function DashboardPage() {
       }
       return;
     }
-    if (selectedCompanyId && companies.data.some((company) => company.id === selectedCompanyId)) {
+    if (
+      selectedCompanyId &&
+      companies.data.some((company) => company.id === selectedCompanyId)
+    ) {
       return;
     }
     persistSelectedCompany(companies.data[0].id);
-  }, [companies.data, selectedCompanyId]);
+  }, [companies.data, persistSelectedCompany, selectedCompanyId]);
 
   useEffect(() => {
     if (!session.token) {
@@ -198,7 +285,9 @@ export function DashboardPage() {
 
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const selectedCompany = useMemo(
-    () => companies.data?.find((company) => company.id === selectedCompanyId) ?? null,
+    () =>
+      companies.data?.find((company) => company.id === selectedCompanyId) ??
+      null,
     [companies.data, selectedCompanyId],
   );
 
@@ -340,25 +429,38 @@ export function DashboardPage() {
   useEffect(() => {
     const firstProjectId = projects.data?.[0]?.id ?? null;
     setSelectedWorkspaceProjectId((current) =>
-      current && projects.data?.some((project) => project.id === current) ? current : firstProjectId,
+      current && projects.data?.some((project) => project.id === current)
+        ? current
+        : firstProjectId,
     );
   }, [projects.data]);
 
   useEffect(() => {
     const firstIssueId = issues.data?.[0]?.id ?? null;
-    setSelectedIssueId((current) => (current && issues.data?.some((issue) => issue.id === current) ? current : firstIssueId));
+    setSelectedIssueId((current) =>
+      current && issues.data?.some((issue) => issue.id === current)
+        ? current
+        : firstIssueId,
+    );
   }, [issues.data]);
 
   useEffect(() => {
     const firstPluginId = plugins.data?.[0]?.id ?? null;
     setSelectedPluginId((current) =>
-      current && plugins.data?.some((plugin) => plugin.id === current) ? current : firstPluginId,
+      current && plugins.data?.some((plugin) => plugin.id === current)
+        ? current
+        : firstPluginId,
     );
   }, [plugins.data]);
 
   const projectWorkspaces = useQuery({
     queryKey: ["project-workspaces", companyId, selectedWorkspaceProjectId],
-    queryFn: () => api.projectWorkspaces(session.token!, companyId, selectedWorkspaceProjectId!),
+    queryFn: () =>
+      api.projectWorkspaces(
+        session.token!,
+        companyId,
+        selectedWorkspaceProjectId!,
+      ),
     enabled: hasCompany && Boolean(selectedWorkspaceProjectId),
   });
 
@@ -371,13 +473,17 @@ export function DashboardPage() {
   useEffect(() => {
     const firstDocumentId = issueDocuments.data?.[0]?.id ?? null;
     setSelectedDocumentId((current) =>
-      current && issueDocuments.data?.some((document) => document.id === current) ? current : firstDocumentId,
+      current &&
+      issueDocuments.data?.some((document) => document.id === current)
+        ? current
+        : firstDocumentId,
     );
   }, [issueDocuments.data]);
 
   const issueDocumentRevisions = useQuery({
     queryKey: ["issue-document-revisions", selectedDocumentId],
-    queryFn: () => api.issueDocumentRevisions(session.token!, selectedDocumentId!),
+    queryFn: () =>
+      api.issueDocumentRevisions(session.token!, selectedDocumentId!),
     enabled: Boolean(session.token && selectedDocumentId),
   });
 
@@ -400,15 +506,30 @@ export function DashboardPage() {
   });
 
   const selectedDocument = useMemo(
-    () => issueDocuments.data?.find((document) => document.id === selectedDocumentId) ?? null,
+    () =>
+      issueDocuments.data?.find(
+        (document) => document.id === selectedDocumentId,
+      ) ?? null,
     [issueDocuments.data, selectedDocumentId],
   );
 
-  const spent = useMemo(() => costs.data?.reduce((sum, item) => sum + item.amountCents, 0) ?? 0, [costs.data]);
-  const activeProjects = useMemo(() => (projects.data ?? []).filter((project) => !project.archivedAt), [projects.data]);
-  const pendingInvites = useMemo(() => (invites.data ?? []).filter((invite) => !invite.acceptedAt), [invites.data]);
+  const spent = useMemo(
+    () => costs.data?.reduce((sum, item) => sum + item.amountCents, 0) ?? 0,
+    [costs.data],
+  );
+  const activeProjects = useMemo(
+    () => (projects.data ?? []).filter((project) => !project.archivedAt),
+    [projects.data],
+  );
+  const pendingInvites = useMemo(
+    () => (invites.data ?? []).filter((invite) => !invite.acceptedAt),
+    [invites.data],
+  );
   const pendingJoinRequests = useMemo(
-    () => (joinRequests.data ?? []).filter((joinRequest) => joinRequest.status === "pending"),
+    () =>
+      (joinRequests.data ?? []).filter(
+        (joinRequest) => joinRequest.status === "pending",
+      ),
     [joinRequests.data],
   );
   const activeLiveEvents = useMemo(
@@ -420,8 +541,15 @@ export function DashboardPage() {
     [companyId, events],
   );
 
-  const goalById = useMemo(() => new Map((goals.data ?? []).map((goal) => [goal.id, goal])), [goals.data]);
-  const projectById = useMemo(() => new Map((projects.data ?? []).map((project) => [project.id, project])), [projects.data]);
+  const goalById = useMemo(
+    () => new Map((goals.data ?? []).map((goal) => [goal.id, goal])),
+    [goals.data],
+  );
+  const projectById = useMemo(
+    () =>
+      new Map((projects.data ?? []).map((project) => [project.id, project])),
+    [projects.data],
+  );
 
   const agentOptions = useMemo(
     () =>
@@ -472,6 +600,8 @@ export function DashboardPage() {
     [issues.data],
   );
   const sectionItems = SECTION_ITEMS;
+  const currentSectionMeta =
+    sectionItems.find((item) => item.id === section) ?? sectionItems[0];
   const companySettingsInitialValues = useMemo(
     () =>
       selectedCompany
@@ -486,31 +616,207 @@ export function DashboardPage() {
         : undefined,
     [selectedCompany],
   );
+  const shellMetrics = useMemo(
+    () => [
+      {
+        id: "companies",
+        label: "Companies",
+        value: companies.data?.length ?? 0,
+        detail: "operating boards",
+      },
+      {
+        id: "members",
+        label: "Members",
+        value: members.data?.length ?? 0,
+        detail: "authenticated people",
+      },
+      {
+        id: "issues",
+        label: "Issues",
+        value: issues.data?.length ?? 0,
+        detail: "tracked workstreams",
+      },
+      {
+        id: "events",
+        label: "Live",
+        value: activeLiveEvents.length,
+        detail: "recent board events",
+      },
+    ],
+    [
+      activeLiveEvents.length,
+      companies.data?.length,
+      issues.data?.length,
+      members.data?.length,
+    ],
+  );
+  const commandActions = useMemo<CommandAction[]>(() => {
+    const sectionActions = sectionItems.map((item) => ({
+      id: `section-${item.id}`,
+      group: "Sections",
+      label: item.label,
+      blurb: item.blurb,
+      hint: item.id === section ? "Current" : `/${item.id}`,
+      active: item.id === section,
+      run: () => {
+        setCommandPaletteOpen(false);
+        navigate(`/app/${item.id}`);
+      },
+    }));
+
+    const companyActions = (companies.data ?? []).map((company) => ({
+      id: `company-${company.id}`,
+      group: "Companies",
+      label: company.name,
+      blurb: company.description ?? `${company.slug} · ${company.status}`,
+      hint: company.id === selectedCompanyId ? "Selected" : company.slug,
+      active: company.id === selectedCompanyId,
+      run: () => {
+        persistSelectedCompany(company.id);
+        setCommandPaletteOpen(false);
+      },
+    }));
+
+    return [
+      ...sectionActions,
+      ...companyActions,
+      {
+        id: "sign-out",
+        group: "Session",
+        label: "Sign out",
+        blurb:
+          "Clear the current session and return to the onboarding surface.",
+        hint: "/",
+        run: () => {
+          setCommandPaletteOpen(false);
+          signOut();
+        },
+      },
+    ];
+  }, [
+    companies.data,
+    navigate,
+    persistSelectedCompany,
+    section,
+    selectedCompanyId,
+    signOut,
+  ]);
+  const filteredCommandActions = useMemo(() => {
+    const query = commandQuery.trim().toLowerCase();
+    if (!query) {
+      return commandActions;
+    }
+    return commandActions.filter((action) =>
+      [action.group, action.label, action.blurb, action.hint]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(query),
+    );
+  }, [commandActions, commandQuery]);
+
+  useEffect(() => {
+    if (!commandPaletteOpen) {
+      setCommandQuery("");
+      setActiveCommandIndex(0);
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      commandInputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [commandPaletteOpen]);
+
+  useEffect(() => {
+    setActiveCommandIndex((current) =>
+      Math.min(current, Math.max(filteredCommandActions.length - 1, 0)),
+    );
+  }, [filteredCommandActions.length]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen((current) => !current);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        setCommandPaletteOpen(false);
+        return;
+      }
+
+      if (!commandPaletteOpen || filteredCommandActions.length === 0) {
+        return;
+      }
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setActiveCommandIndex((current) =>
+          Math.min(current + 1, filteredCommandActions.length - 1),
+        );
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setActiveCommandIndex((current) => Math.max(current - 1, 0));
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        filteredCommandActions[activeCommandIndex]?.run();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeCommandIndex, commandPaletteOpen, filteredCommandActions]);
 
   const invalidateCompanyData = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["companies", session.token] });
-    await queryClient.invalidateQueries({ queryKey: ["company-members", companyId] });
-    await queryClient.invalidateQueries({ queryKey: ["departments", companyId] });
+    await queryClient.invalidateQueries({
+      queryKey: ["companies", session.token],
+    });
+    await queryClient.invalidateQueries({
+      queryKey: ["company-members", companyId],
+    });
+    await queryClient.invalidateQueries({
+      queryKey: ["departments", companyId],
+    });
     await queryClient.invalidateQueries({ queryKey: ["positions", companyId] });
-    await queryClient.invalidateQueries({ queryKey: ["company-invites", companyId] });
-    await queryClient.invalidateQueries({ queryKey: ["join-requests", companyId] });
+    await queryClient.invalidateQueries({
+      queryKey: ["company-invites", companyId],
+    });
+    await queryClient.invalidateQueries({
+      queryKey: ["join-requests", companyId],
+    });
     await queryClient.invalidateQueries({ queryKey: ["activity", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["goals", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["projects", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["issues", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["agents", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["approvals", companyId] });
-    await queryClient.invalidateQueries({ queryKey: ["heartbeats", companyId] });
+    await queryClient.invalidateQueries({
+      queryKey: ["heartbeats", companyId],
+    });
     await queryClient.invalidateQueries({ queryKey: ["costs", companyId] });
-    await queryClient.invalidateQueries({ queryKey: ["cost-overview", companyId] });
-    await queryClient.invalidateQueries({ queryKey: ["finance-events", companyId] });
-    await queryClient.invalidateQueries({ queryKey: ["quota-windows", companyId] });
+    await queryClient.invalidateQueries({
+      queryKey: ["cost-overview", companyId],
+    });
+    await queryClient.invalidateQueries({
+      queryKey: ["finance-events", companyId],
+    });
+    await queryClient.invalidateQueries({
+      queryKey: ["quota-windows", companyId],
+    });
     await queryClient.invalidateQueries({ queryKey: ["org-tree", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["skills", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["secrets", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["plugins", companyId] });
     await queryClient.invalidateQueries({ queryKey: ["routines", companyId] });
-    await queryClient.invalidateQueries({ queryKey: ["execution-workspaces", companyId] });
+    await queryClient.invalidateQueries({
+      queryKey: ["execution-workspaces", companyId],
+    });
   };
 
   const createCompany = useMutation({
@@ -523,7 +829,9 @@ export function DashboardPage() {
         monthlyBudgetCents: Number(values.monthlyBudgetCents || "0"),
       }),
     onSuccess: async (company) => {
-      await queryClient.invalidateQueries({ queryKey: ["companies", session.token] });
+      await queryClient.invalidateQueries({
+        queryKey: ["companies", session.token],
+      });
       persistSelectedCompany(company.id);
     },
   });
@@ -559,14 +867,23 @@ export function DashboardPage() {
       api.updateDepartment(session.token!, values.departmentId, {
         slug: values.slug || undefined,
         name: values.name || undefined,
-        description: values.description ? values.description : values.description === "" ? null : undefined,
-        headAgentId: values.headAgentId ? values.headAgentId : values.headAgentId === "" ? null : undefined,
+        description: values.description
+          ? values.description
+          : values.description === ""
+            ? null
+            : undefined,
+        headAgentId: values.headAgentId
+          ? values.headAgentId
+          : values.headAgentId === ""
+            ? null
+            : undefined,
       }),
     onSuccess: invalidateCompanyData,
   });
 
   const deleteDepartment = useMutation({
-    mutationFn: (departmentId: string) => api.deleteDepartment(session.token!, departmentId),
+    mutationFn: (departmentId: string) =>
+      api.deleteDepartment(session.token!, departmentId),
     onSuccess: invalidateCompanyData,
   });
 
@@ -586,23 +903,41 @@ export function DashboardPage() {
       api.updatePosition(session.token!, values.positionId, {
         slug: values.slug || undefined,
         name: values.name || undefined,
-        description: values.description ? values.description : values.description === "" ? null : undefined,
-        isExecutive: values.isExecutive === "" ? undefined : values.isExecutive === "true",
+        description: values.description
+          ? values.description
+          : values.description === ""
+            ? null
+            : undefined,
+        isExecutive:
+          values.isExecutive === "" ? undefined : values.isExecutive === "true",
       }),
     onSuccess: invalidateCompanyData,
   });
 
   const deletePosition = useMutation({
-    mutationFn: (positionId: string) => api.deletePosition(session.token!, positionId),
+    mutationFn: (positionId: string) =>
+      api.deletePosition(session.token!, positionId),
     onSuccess: invalidateCompanyData,
   });
 
   const updateAgentOrgProfile = useMutation({
     mutationFn: (values: Record<string, string>) =>
       api.updateAgentOrgProfile(session.token!, values.agentId, {
-        departmentId: values.departmentId ? values.departmentId : values.departmentId === "" ? null : undefined,
-        positionId: values.positionId ? values.positionId : values.positionId === "" ? null : undefined,
-        title: values.title ? values.title : values.title === "" ? null : undefined,
+        departmentId: values.departmentId
+          ? values.departmentId
+          : values.departmentId === ""
+            ? null
+            : undefined,
+        positionId: values.positionId
+          ? values.positionId
+          : values.positionId === ""
+            ? null
+            : undefined,
+        title: values.title
+          ? values.title
+          : values.title === ""
+            ? null
+            : undefined,
       }),
     onSuccess: invalidateCompanyData,
   });
@@ -707,8 +1042,12 @@ export function DashboardPage() {
         isPrimary: values.isPrimary === "true",
       }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["project-workspaces", companyId, selectedWorkspaceProjectId] });
-      await queryClient.invalidateQueries({ queryKey: ["activity", companyId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["project-workspaces", companyId, selectedWorkspaceProjectId],
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["activity", companyId],
+      });
     },
   });
 
@@ -762,15 +1101,23 @@ export function DashboardPage() {
 
   const createIssueDocument = useMutation({
     mutationFn: (values: Record<string, string>) =>
-      api.createIssueDocument(session.token!, values.issueId || selectedIssueId!, {
-        key: values.key,
-        title: values.title,
-        format: values.format === "text" ? "text" : "markdown",
-        body: values.body,
-      }),
+      api.createIssueDocument(
+        session.token!,
+        values.issueId || selectedIssueId!,
+        {
+          key: values.key,
+          title: values.title,
+          format: values.format === "text" ? "text" : "markdown",
+          body: values.body,
+        },
+      ),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["issue-documents", selectedIssueId] });
-      await queryClient.invalidateQueries({ queryKey: ["activity", companyId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["issue-documents", selectedIssueId],
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["activity", companyId],
+      });
     },
   });
 
@@ -782,34 +1129,50 @@ export function DashboardPage() {
         body: values.body || undefined,
       }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["issue-documents", selectedIssueId] });
-      await queryClient.invalidateQueries({ queryKey: ["issue-document-revisions", selectedDocumentId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["issue-documents", selectedIssueId],
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["issue-document-revisions", selectedDocumentId],
+      });
     },
   });
 
   const createIssueAttachment = useMutation({
     mutationFn: (values: Record<string, string>) =>
-      api.createIssueAttachment(session.token!, values.issueId || selectedIssueId!, {
-        name: values.name,
-        contentType: values.contentType,
-        sizeBytes: Number(values.sizeBytes || "0"),
-        url: values.url || null,
-        metadata: parseJsonField(values.metadata),
-      }),
+      api.createIssueAttachment(
+        session.token!,
+        values.issueId || selectedIssueId!,
+        {
+          name: values.name,
+          contentType: values.contentType,
+          sizeBytes: Number(values.sizeBytes || "0"),
+          url: values.url || null,
+          metadata: parseJsonField(values.metadata),
+        },
+      ),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["issue-attachments", selectedIssueId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["issue-attachments", selectedIssueId],
+      });
     },
   });
 
   const createIssueWorkProduct = useMutation({
     mutationFn: (values: Record<string, string>) =>
-      api.createIssueWorkProduct(session.token!, values.issueId || selectedIssueId!, {
-        kind: values.kind,
-        title: values.title,
-        content: parseJsonField(values.content),
-      }),
+      api.createIssueWorkProduct(
+        session.token!,
+        values.issueId || selectedIssueId!,
+        {
+          kind: values.kind,
+          title: values.title,
+          content: parseJsonField(values.content),
+        },
+      ),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["issue-work-products", selectedIssueId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["issue-work-products", selectedIssueId],
+      });
     },
   });
 
@@ -832,16 +1195,28 @@ export function DashboardPage() {
 
   const invokePluginTool = useMutation({
     mutationFn: (values: Record<string, string>) =>
-      api.invokePluginTool(session.token!, values.pluginId || selectedPluginId!, values.toolName, parseJsonField(values.input)),
+      api.invokePluginTool(
+        session.token!,
+        values.pluginId || selectedPluginId!,
+        values.toolName,
+        parseJsonField(values.input),
+      ),
     onSuccess: async (result) => {
       setPluginActionResult(result);
-      await queryClient.invalidateQueries({ queryKey: ["plugin-health", selectedPluginId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["plugin-health", selectedPluginId],
+      });
     },
   });
 
   const triggerPluginJob = useMutation({
     mutationFn: (values: Record<string, string>) =>
-      api.triggerPluginJob(session.token!, values.pluginId || selectedPluginId!, values.jobKey, parseJsonField(values.input)),
+      api.triggerPluginJob(
+        session.token!,
+        values.pluginId || selectedPluginId!,
+        values.jobKey,
+        parseJsonField(values.input),
+      ),
     onSuccess: (result) => {
       setPluginActionResult(result);
     },
@@ -861,11 +1236,14 @@ export function DashboardPage() {
   });
 
   async function downloadOrgChart(format: "svg" | "png") {
-    const response = await fetch(`${API_BASE}/org-chart.${format}?companyId=${encodeURIComponent(companyId)}`, {
-      headers: {
-        authorization: `Bearer ${session.token}`,
+    const response = await fetch(
+      `${API_BASE}/org-chart.${format}?companyId=${encodeURIComponent(companyId)}`,
+      {
+        headers: {
+          authorization: `Bearer ${session.token}`,
+        },
       },
-    });
+    );
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -880,47 +1258,91 @@ export function DashboardPage() {
   }
 
   return (
-    <main className="min-h-screen px-4 py-6 sm:px-6 sm:py-8">
-      <div className="mx-auto grid max-w-7xl gap-6">
-        <header className="flex flex-wrap items-start justify-between gap-4">
-          <div className="space-y-2">
-            <p className="text-xs uppercase tracking-[0.3em] text-cyan-300">Operating Control Plane</p>
-            <h1 className="text-3xl font-semibold text-white sm:text-4xl">
-              Run companies, workspaces, agents, plugins, and issue artifacts from one board
-            </h1>
-            <p className="max-w-3xl text-zinc-400">
-              PaperAI now operates more like a full operator console: bootstrap companies, manage org structure,
-              provision workspaces, publish skills, protect secrets, and attach execution artifacts to issues.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-zinc-300"
-              onClick={() => setCommandPaletteOpen(true)}
-            >
-              Command palette
-              <span className="ml-2 text-xs text-zinc-500">Ctrl/Cmd+K</span>
-            </button>
-            <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-zinc-300">
-              {session.user?.email}
-            </div>
-            <button
-              className="rounded-2xl border border-white/10 px-4 py-2 text-sm"
-              onClick={() => {
-                saveSession({ token: null, user: null, selectedCompanyId: null });
-                navigate("/");
-              }}
-            >
-              Sign out
-            </button>
-          </div>
-        </header>
+    <main className="paper-grid relative isolate min-h-screen px-4 py-4 sm:px-5 sm:py-5">
+      <div className="mx-auto max-w-[1480px]">
+        <div className="grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
+          <aside className="grid gap-5 xl:sticky xl:top-5 xl:self-start">
+            <section className="paper-panel rounded-[2rem] border px-5 py-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="paper-shell-label text-[0.66rem] font-medium">
+                    Authenticated shell
+                  </p>
+                  <h1 className="mt-2 text-2xl font-semibold text-white">
+                    PaperAI Operator
+                  </h1>
+                </div>
+                <div className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs text-cyan-100">
+                  /app
+                </div>
+              </div>
+              <div className="mt-5 rounded-[1.6rem] border border-white/10 bg-black/20 p-4">
+                <div className="text-xs uppercase tracking-[0.22em] text-zinc-500">
+                  Signed in as
+                </div>
+                <div className="mt-2 text-sm font-medium text-white">
+                  {session.user?.name ?? "Operator"}
+                </div>
+                <div className="mt-1 text-sm text-zinc-400">
+                  {session.user?.email}
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Badge
+                    label={currentSectionMeta.label}
+                    tone="bg-cyan-300/15 text-cyan-100"
+                  />
+                  {selectedCompany ? (
+                    <Badge
+                      label={selectedCompany.slug}
+                      tone="bg-white/10 text-zinc-200"
+                    />
+                  ) : null}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="paper-accent-button mt-5 flex w-full items-center justify-between rounded-[1.5rem] px-4 py-4 text-left"
+                onClick={() => setCommandPaletteOpen(true)}
+              >
+                <div>
+                  <div className="text-sm font-semibold">Command palette</div>
+                  <div className="mt-1 text-xs text-slate-700/80">
+                    Jump across sections, companies, and session actions.
+                  </div>
+                </div>
+                <span className="rounded-full border border-black/10 bg-white/40 px-3 py-1 text-xs text-slate-800">
+                  Ctrl/Cmd+K
+                </span>
+              </button>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                {shellMetrics.map((metric) => (
+                  <ShellStatCard
+                    key={metric.id}
+                    label={metric.label}
+                    value={metric.value}
+                    detail={metric.detail}
+                  />
+                ))}
+              </div>
+              <button
+                type="button"
+                className="paper-muted-button mt-5 w-full rounded-[1.35rem] px-4 py-3 text-sm text-zinc-200 transition hover:border-white/15 hover:bg-white/8"
+                onClick={signOut}
+              >
+                Sign out
+              </button>
+            </section>
 
-        <div className="grid gap-6 xl:grid-cols-[300px_minmax(0,1fr)]">
-          <aside className="grid gap-6">
             <Panel
               title="Companies"
-              actions={<Badge label={`${companies.data?.length ?? 0} total`} tone="bg-cyan-300/15 text-cyan-100" />}
+              eyebrow="Workspace context"
+              className="rounded-[2rem]"
+              actions={
+                <Badge
+                  label={`${companies.data?.length ?? 0} total`}
+                  tone="bg-cyan-300/15 text-cyan-100"
+                />
+              }
             >
               {(companies.data?.length ?? 0) === 0 ? (
                 <EmptyState message="No companies yet. Create the first operating workspace to start managing agents and workstreams." />
@@ -931,28 +1353,43 @@ export function DashboardPage() {
                     return (
                       <button
                         key={company.id}
-                        className={`grid gap-3 rounded-2xl border p-4 text-left transition ${
-                          selected
-                            ? "border-cyan-300/60 bg-cyan-400/10 shadow-lg shadow-cyan-950/30"
-                            : "border-white/10 bg-black/20 hover:border-white/20 hover:bg-white/6"
-                        }`}
+                        type="button"
+                        className={`grid gap-3 rounded-[1.45rem] border p-4 text-left transition ${selected ? "border-cyan-300/60 bg-cyan-400/10 shadow-lg shadow-cyan-950/30" : "border-white/10 bg-black/20 hover:border-white/20 hover:bg-white/6"}`}
                         onClick={() => persistSelectedCompany(company.id)}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-start gap-3">
                             <span
-                              className="mt-1 h-3 w-3 rounded-full border border-white/20"
-                              style={{ backgroundColor: company.brandColor ?? "#22d3ee" }}
-                            />
+                              className="mt-1 flex h-10 w-10 items-center justify-center rounded-[1rem] border border-white/10 text-xs font-semibold"
+                              style={{
+                                backgroundColor:
+                                  company.brandColor ?? "#22d3ee",
+                                color: "#041019",
+                              }}
+                            >
+                              {company.name.slice(0, 2).toUpperCase()}
+                            </span>
                             <div>
-                              <div className="font-medium text-white">{company.name}</div>
-                              <div className="text-xs text-zinc-500">{company.slug}</div>
+                              <div className="font-medium text-white">
+                                {company.name}
+                              </div>
+                              <div className="text-xs text-zinc-500">
+                                {company.slug}
+                              </div>
                             </div>
                           </div>
-                          <Badge label={company.status} tone={STATUS_TONES[company.status]} />
+                          <Badge
+                            label={company.status}
+                            tone={STATUS_TONES[company.status]}
+                          />
                         </div>
-                        <p className="text-sm text-zinc-400">{company.description ?? "No description yet."}</p>
-                        <div className="text-xs text-zinc-500">Budget {formatCurrency(company.monthlyBudgetCents)} / month</div>
+                        <p className="text-sm text-zinc-400">
+                          {company.description ?? "No description yet."}
+                        </p>
+                        <div className="text-xs text-zinc-500">
+                          Budget {formatCurrency(company.monthlyBudgetCents)} /
+                          month
+                        </div>
                       </button>
                     );
                   })}
@@ -960,15 +1397,40 @@ export function DashboardPage() {
               )}
             </Panel>
 
-            <Panel title="Create company">
+            <Panel
+              title="Create company"
+              eyebrow="Setup rail"
+              className="rounded-[2rem]"
+            >
               <InlineForm
                 submitLabel="Create company"
                 fields={[
-                  { name: "slug", label: "Slug", placeholder: "paperai-studio" },
-                  { name: "name", label: "Name", placeholder: "PaperAI Studio" },
-                  { name: "description", label: "Description", type: "textarea", rows: 3 },
-                  { name: "brandColor", label: "Brand color", placeholder: "#06b6d4" },
-                  { name: "monthlyBudgetCents", label: "Monthly budget (cents)", type: "number" },
+                  {
+                    name: "slug",
+                    label: "Slug",
+                    placeholder: "paperai-studio",
+                  },
+                  {
+                    name: "name",
+                    label: "Name",
+                    placeholder: "PaperAI Studio",
+                  },
+                  {
+                    name: "description",
+                    label: "Description",
+                    type: "textarea",
+                    rows: 3,
+                  },
+                  {
+                    name: "brandColor",
+                    label: "Brand color",
+                    placeholder: "#06b6d4",
+                  },
+                  {
+                    name: "monthlyBudgetCents",
+                    label: "Monthly budget (cents)",
+                    type: "number",
+                  },
                 ]}
                 onSubmit={async (values) => {
                   await createCompany.mutateAsync(values);
@@ -976,10 +1438,14 @@ export function DashboardPage() {
               />
             </Panel>
 
-            <Panel title="Navigation">
+            <Panel
+              title="Navigation"
+              eyebrow="Section shortcuts"
+              className="rounded-[2rem]"
+            >
               <div className="grid gap-3">
                 <select
-                  className="rounded-2xl border border-white/10 bg-zinc-950/70 px-3 py-2 text-white md:hidden"
+                  className="paper-input rounded-[1.3rem] px-3.5 py-3 text-white md:hidden"
                   value={section}
                   onChange={(event) => navigate(`/app/${event.target.value}`)}
                 >
@@ -991,35 +1457,39 @@ export function DashboardPage() {
                 </select>
                 <div className="hidden gap-2 md:grid">
                   {sectionItems.map((item) => (
-                    <button
+                    <ShellNavButton
                       key={item.id}
-                      className={`rounded-2xl border px-4 py-3 text-left ${
-                        item.id === section
-                          ? "border-cyan-300/60 bg-cyan-400/10 text-white"
-                          : "border-white/10 bg-black/20 text-zinc-300 hover:border-white/20"
-                      }`}
+                      active={item.id === section}
+                      glyph={item.glyph}
+                      label={item.label}
+                      blurb={item.blurb}
                       onClick={() => navigate(`/app/${item.id}`)}
-                    >
-                      <div className="font-medium">{item.label}</div>
-                      <div className="mt-1 text-xs text-zinc-500">{item.blurb}</div>
-                    </button>
+                    />
                   ))}
                 </div>
               </div>
             </Panel>
 
-            <Panel title="Live stream">
+            <Panel
+              title="Live stream"
+              eyebrow="Realtime board"
+              className="rounded-[2rem]"
+            >
               {activeLiveEvents.length === 0 ? (
                 <EmptyState message="Live board events will appear here as companies, agents, and workspaces change state." />
               ) : (
                 <div className="grid gap-2 text-sm text-zinc-300">
-                  {activeLiveEvents.slice(0, 8).map((event, index) => (
+                  {activeLiveEvents.slice(0, 8).map((event) => (
                     <div
-                      key={`${event.type}-${event.at}-${index}`}
-                      className="rounded-2xl border border-white/10 bg-black/20 px-3 py-3"
+                      key={`${event.type}-${event.at}-${event.payload?.summary ?? event.payload?.title ?? event.payload?.name ?? "event"}`}
+                      className="rounded-[1.35rem] border border-white/10 bg-black/20 px-3 py-3"
                     >
-                      <div className="font-medium text-white">{event.payload?.summary ?? getEventLabel(event)}</div>
-                      <div className="mt-1 text-xs text-zinc-500">{formatDateTime(event.at)}</div>
+                      <div className="font-medium text-white">
+                        {event.payload?.summary ?? getEventLabel(event)}
+                      </div>
+                      <div className="mt-1 text-xs text-zinc-500">
+                        {formatDateTime(event.at)}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1027,283 +1497,429 @@ export function DashboardPage() {
             </Panel>
           </aside>
 
-          <div className="grid gap-6">
-            {!selectedCompany ? (
-              <Panel title="Select company">
-                <EmptyState message="Choose a company from the left rail or create a new one to unlock company-specific controls." />
-              </Panel>
-            ) : (
-              <>
-                <section className="grid gap-4 lg:grid-cols-[1.25fr_0.75fr]">
-                  <CompanyHero company={selectedCompany} members={members.data?.length ?? 0} pendingInvites={pendingInvites.length} />
-                  <Panel title="Board health">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <MetricTile title="Members" value={members.data?.length ?? 0} detail="Humans with access to the board" />
-                      <MetricTile title="Agents" value={agents.data?.length ?? 0} detail="Configured operator runtimes" />
-                      <MetricTile title="Issues" value={issues.data?.length ?? 0} detail="Execution backlog and current work" />
-                      <MetricTile title="Workspaces" value={(executionWorkspaces.data?.length ?? 0) + (projectWorkspaces.data?.length ?? 0)} detail="Provisioned project and execution spaces" />
-                      <MetricTile title="Spend" value={formatCurrency(spent)} detail="Tracked month-to-date usage" />
-                      <MetricTile title="Plugins" value={plugins.data?.length ?? 0} detail="Installed extensions and tools" />
-                    </div>
-                  </Panel>
-                </section>
-
-                {section === "overview" ? (
-                  <OverviewSection
-                    company={selectedCompany}
-                    companySettingsInitialValues={companySettingsInitialValues}
-                    members={members.data ?? []}
-                    departments={departments.data ?? []}
-                    positions={positions.data ?? []}
-                    invites={invites.data ?? []}
-                    joinRequests={joinRequests.data ?? []}
-                    pendingInvites={pendingInvites.length}
-                    pendingJoinRequests={pendingJoinRequests.length}
-                    activity={activity.data ?? []}
-                    goals={goals.data ?? []}
-                    projects={activeProjects}
-                    issues={issues.data ?? []}
-                    approvals={approvals.data ?? []}
-                    heartbeats={heartbeats.data ?? []}
-                    agents={agents.data ?? []}
-                    plugins={plugins.data ?? []}
-                    routines={routines.data ?? []}
-                    goalById={goalById}
-                    projectById={projectById}
-                    agentOptions={agentOptions}
-                    departmentOptions={departmentOptions}
-                    positionOptions={positionOptions}
-                    goalOptions={goalOptions}
-                    projectOptions={projectOptions}
-                    issueOptions={issueOptions}
-                    onWakeAgent={(agentId) =>
-                      api.wakeAgent(session.token!, agentId).then(async () => {
-                        await queryClient.invalidateQueries({ queryKey: ["heartbeats", companyId] });
-                      })
-                    }
-                    onApprove={(approvalId, status) =>
-                      api.resolveApproval(session.token!, approvalId, status).then(async () => {
-                        await queryClient.invalidateQueries({ queryKey: ["approvals", companyId] });
-                      })
-                    }
-                    onUpdateCompany={async (values) => {
-                      await updateCompany.mutateAsync(values);
-                    }}
-                    onCreateInvite={async (values) => {
-                      await createInvite.mutateAsync(values);
-                    }}
-                    onResolveJoinRequest={async (joinRequestId, status, role) => {
-                      await resolveJoinRequest.mutateAsync({ joinRequestId, status, role });
-                    }}
-                    onCreateGoal={async (values) => {
-                      await createGoal.mutateAsync(values);
-                    }}
-                    onCreateProject={async (values) => {
-                      await createProject.mutateAsync(values);
-                    }}
-                    onCreateIssue={async (values) => {
-                      await createIssue.mutateAsync(values);
-                    }}
-                    onCreateAgent={async (values) => {
-                      await createAgent.mutateAsync(values);
-                    }}
-                    onCreateDepartment={async (values) => {
-                      await createDepartment.mutateAsync(values);
-                    }}
-                    onUpdateDepartment={async (values) => {
-                      await updateDepartment.mutateAsync(values);
-                    }}
-                    onDeleteDepartment={async (departmentId) => {
-                      await deleteDepartment.mutateAsync(departmentId);
-                    }}
-                    onCreatePosition={async (values) => {
-                      await createPosition.mutateAsync(values);
-                    }}
-                    onUpdatePosition={async (values) => {
-                      await updatePosition.mutateAsync(values);
-                    }}
-                    onDeletePosition={async (positionId) => {
-                      await deletePosition.mutateAsync(positionId);
-                    }}
-                    onUpdateAgentOrgProfile={async (values) => {
-                      await updateAgentOrgProfile.mutateAsync(values);
-                    }}
+          <div className="grid gap-5">
+            <header className="paper-panel rounded-[2rem] border px-5 py-5 sm:px-6">
+              <div className="flex flex-wrap items-start justify-between gap-5">
+                <div className="max-w-3xl space-y-3">
+                  <p className="paper-shell-label text-[0.68rem] font-medium">
+                    {currentSectionMeta.label} · operator section
+                  </p>
+                  <h2 className="text-3xl font-semibold text-white sm:text-[2.45rem]">
+                    {selectedCompany
+                      ? `${selectedCompany.name} · ${currentSectionMeta.label}`
+                      : `Open ${currentSectionMeta.label}`}
+                  </h2>
+                  <p className="max-w-3xl text-zinc-400">
+                    {currentSectionMeta.blurb} The route contract stays at{" "}
+                    <span className="text-cyan-200">/app/:section?</span> while
+                    the shell now behaves more like an assistant-led workspace.
+                  </p>
+                </div>
+                <div className="min-w-[260px] rounded-[1.7rem] border border-white/10 bg-black/20 p-4">
+                  <div className="text-xs uppercase tracking-[0.22em] text-zinc-500">
+                    Selected company
+                  </div>
+                  <div className="mt-3 text-lg font-semibold text-white">
+                    {selectedCompany?.name ?? "No company selected"}
+                  </div>
+                  <div className="mt-1 text-sm text-zinc-400">
+                    {selectedCompany?.description ??
+                      "Choose or create a company from the left rail to unlock the operator surface."}
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Badge
+                      label={currentSectionMeta.label}
+                      tone="bg-cyan-300/15 text-cyan-100"
+                    />
+                    {selectedCompany ? (
+                      <Badge
+                        label={selectedCompany.status}
+                        tone={STATUS_TONES[selectedCompany.status]}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {shellMetrics.map((metric) => (
+                  <ShellStatCard
+                    key={`hero-${metric.id}`}
+                    label={metric.label}
+                    value={metric.value}
+                    detail={metric.detail}
                   />
-                ) : null}
+                ))}
+              </div>
+            </header>
 
-                {section === "org" ? (
-                  <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-                    <Panel
-                      title="Org tree"
-                      actions={
-                        <div className="flex gap-2">
-                          <button className="rounded-full bg-cyan-300 px-3 py-1 text-xs font-medium text-zinc-950" onClick={() => void downloadOrgChart("svg")}>
-                            Export SVG
-                          </button>
-                          <button className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white" onClick={() => void downloadOrgChart("png")}>
-                            Export PNG
-                          </button>
-                        </div>
-                      }
-                    >
-                      {!orgTree.data || orgTree.data.agents.length === 0 ? (
-                        <EmptyState message="No agents have been added yet, so the org tree is still empty." />
-                      ) : (
-                        <div className="grid gap-4">
-                          {orgTree.data.agents.map((node) => (
-                            <OrgNodeCard key={node.id} node={node} />
-                          ))}
-                        </div>
-                      )}
-                    </Panel>
-                    <Panel title="Operator notes">
-                      <div className="grid gap-3 text-sm text-zinc-300">
-                        <InfoCard title="Root agents" value={orgTree.data?.agents.length ?? 0} detail="Agents without parents become the board roots." />
-                        <InfoCard
-                          title="Company slug"
-                          value={orgTree.data?.company.slug ?? selectedCompany.slug}
-                          detail="Used in exports and board-level routing."
+            <div className="grid gap-6">
+              {!selectedCompany ? (
+                <Panel title="Select company">
+                  <EmptyState message="Choose a company from the left rail or create a new one to unlock company-specific controls." />
+                </Panel>
+              ) : (
+                <>
+                  <section className="grid gap-4 lg:grid-cols-[1.25fr_0.75fr]">
+                    <CompanyHero
+                      company={selectedCompany}
+                      members={members.data?.length ?? 0}
+                      pendingInvites={pendingInvites.length}
+                    />
+                    <Panel title="Board health">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <MetricTile
+                          title="Members"
+                          value={members.data?.length ?? 0}
+                          detail="Humans with access to the board"
                         />
-                        <InfoCard
-                          title="Runtime states"
-                          value={(agents.data ?? []).filter((agent) => agent.status === "running").length}
-                          detail="Agents currently running a heartbeat."
+                        <MetricTile
+                          title="Agents"
+                          value={agents.data?.length ?? 0}
+                          detail="Configured operator runtimes"
+                        />
+                        <MetricTile
+                          title="Issues"
+                          value={issues.data?.length ?? 0}
+                          detail="Execution backlog and current work"
+                        />
+                        <MetricTile
+                          title="Workspaces"
+                          value={
+                            (executionWorkspaces.data?.length ?? 0) +
+                            (projectWorkspaces.data?.length ?? 0)
+                          }
+                          detail="Provisioned project and execution spaces"
+                        />
+                        <MetricTile
+                          title="Spend"
+                          value={formatCurrency(spent)}
+                          detail="Tracked month-to-date usage"
+                        />
+                        <MetricTile
+                          title="Plugins"
+                          value={plugins.data?.length ?? 0}
+                          detail="Installed extensions and tools"
                         />
                       </div>
                     </Panel>
                   </section>
-                ) : null}
 
-                {section === "costs" ? (
-                  <CostSection
-                    overview={costOverview.data}
-                    financeEvents={financeEvents.data ?? []}
-                    quotaWindows={quotaWindows.data ?? []}
-                    agents={agents.data ?? []}
-                    projects={projects.data ?? []}
-                  />
-                ) : null}
+                  {section === "overview" ? (
+                    <OverviewSection
+                      company={selectedCompany}
+                      companySettingsInitialValues={
+                        companySettingsInitialValues
+                      }
+                      members={members.data ?? []}
+                      departments={departments.data ?? []}
+                      positions={positions.data ?? []}
+                      invites={invites.data ?? []}
+                      joinRequests={joinRequests.data ?? []}
+                      pendingInvites={pendingInvites.length}
+                      pendingJoinRequests={pendingJoinRequests.length}
+                      activity={activity.data ?? []}
+                      goals={goals.data ?? []}
+                      projects={activeProjects}
+                      issues={issues.data ?? []}
+                      approvals={approvals.data ?? []}
+                      heartbeats={heartbeats.data ?? []}
+                      agents={agents.data ?? []}
+                      plugins={plugins.data ?? []}
+                      routines={routines.data ?? []}
+                      goalById={goalById}
+                      projectById={projectById}
+                      agentOptions={agentOptions}
+                      departmentOptions={departmentOptions}
+                      positionOptions={positionOptions}
+                      goalOptions={goalOptions}
+                      projectOptions={projectOptions}
+                      issueOptions={issueOptions}
+                      onWakeAgent={(agentId) =>
+                        api
+                          .wakeAgent(session.token!, agentId)
+                          .then(async () => {
+                            await queryClient.invalidateQueries({
+                              queryKey: ["heartbeats", companyId],
+                            });
+                          })
+                      }
+                      onApprove={(approvalId, status) =>
+                        api
+                          .resolveApproval(session.token!, approvalId, status)
+                          .then(async () => {
+                            await queryClient.invalidateQueries({
+                              queryKey: ["approvals", companyId],
+                            });
+                          })
+                      }
+                      onUpdateCompany={async (values) => {
+                        await updateCompany.mutateAsync(values);
+                      }}
+                      onCreateInvite={async (values) => {
+                        await createInvite.mutateAsync(values);
+                      }}
+                      onResolveJoinRequest={async (
+                        joinRequestId,
+                        status,
+                        role,
+                      ) => {
+                        await resolveJoinRequest.mutateAsync({
+                          joinRequestId,
+                          status,
+                          role,
+                        });
+                      }}
+                      onCreateGoal={async (values) => {
+                        await createGoal.mutateAsync(values);
+                      }}
+                      onCreateProject={async (values) => {
+                        await createProject.mutateAsync(values);
+                      }}
+                      onCreateIssue={async (values) => {
+                        await createIssue.mutateAsync(values);
+                      }}
+                      onCreateAgent={async (values) => {
+                        await createAgent.mutateAsync(values);
+                      }}
+                      onCreateDepartment={async (values) => {
+                        await createDepartment.mutateAsync(values);
+                      }}
+                      onUpdateDepartment={async (values) => {
+                        await updateDepartment.mutateAsync(values);
+                      }}
+                      onDeleteDepartment={async (departmentId) => {
+                        await deleteDepartment.mutateAsync(departmentId);
+                      }}
+                      onCreatePosition={async (values) => {
+                        await createPosition.mutateAsync(values);
+                      }}
+                      onUpdatePosition={async (values) => {
+                        await updatePosition.mutateAsync(values);
+                      }}
+                      onDeletePosition={async (positionId) => {
+                        await deletePosition.mutateAsync(positionId);
+                      }}
+                      onUpdateAgentOrgProfile={async (values) => {
+                        await updateAgentOrgProfile.mutateAsync(values);
+                      }}
+                    />
+                  ) : null}
 
-                {section === "workspaces" ? (
-                  <WorkspaceSection
-                    projects={activeProjects}
-                    issues={issues.data ?? []}
-                    selectedWorkspaceProjectId={selectedWorkspaceProjectId}
-                    setSelectedWorkspaceProjectId={setSelectedWorkspaceProjectId}
-                    projectWorkspaces={projectWorkspaces.data ?? []}
-                    executionWorkspaces={executionWorkspaces.data ?? []}
-                    onCreateProjectWorkspace={async (values) => {
-                      await createProjectWorkspace.mutateAsync(values);
-                    }}
-                    onCreateExecutionWorkspace={async (values) => {
-                      await createExecutionWorkspace.mutateAsync(values);
-                    }}
-                  />
-                ) : null}
+                  {section === "org" ? (
+                    <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+                      <Panel
+                        title="Org tree"
+                        actions={
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              className="rounded-full bg-cyan-300 px-3 py-1 text-xs font-medium text-zinc-950"
+                              onClick={() => void downloadOrgChart("svg")}
+                            >
+                              Export SVG
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white"
+                              onClick={() => void downloadOrgChart("png")}
+                            >
+                              Export PNG
+                            </button>
+                          </div>
+                        }
+                      >
+                        {!orgTree.data || orgTree.data.agents.length === 0 ? (
+                          <EmptyState message="No agents have been added yet, so the org tree is still empty." />
+                        ) : (
+                          <div className="grid gap-4">
+                            {orgTree.data.agents.map((node) => (
+                              <OrgNodeCard key={node.id} node={node} />
+                            ))}
+                          </div>
+                        )}
+                      </Panel>
+                      <Panel title="Operator notes">
+                        <div className="grid gap-3 text-sm text-zinc-300">
+                          <InfoCard
+                            title="Root agents"
+                            value={orgTree.data?.agents.length ?? 0}
+                            detail="Agents without parents become the board roots."
+                          />
+                          <InfoCard
+                            title="Company slug"
+                            value={
+                              orgTree.data?.company.slug ?? selectedCompany.slug
+                            }
+                            detail="Used in exports and board-level routing."
+                          />
+                          <InfoCard
+                            title="Runtime states"
+                            value={
+                              (agents.data ?? []).filter(
+                                (agent) => agent.status === "running",
+                              ).length
+                            }
+                            detail="Agents currently running a heartbeat."
+                          />
+                        </div>
+                      </Panel>
+                    </section>
+                  ) : null}
 
-                {section === "issues" ? (
-                  <IssueOpsSection
-                    issues={issues.data ?? []}
-                    selectedIssueId={selectedIssueId}
-                    setSelectedIssueId={setSelectedIssueId}
-                    issueDocuments={issueDocuments.data ?? []}
-                    selectedDocument={selectedDocument}
-                    setSelectedDocumentId={setSelectedDocumentId}
-                    issueDocumentRevisions={issueDocumentRevisions.data ?? []}
-                    issueAttachments={issueAttachments.data ?? []}
-                    issueWorkProducts={issueWorkProducts.data ?? []}
-                    onCreateDocument={async (values) => {
-                      await createIssueDocument.mutateAsync(values);
-                    }}
-                    onUpdateDocument={async (values) => {
-                      await updateIssueDocument.mutateAsync(values);
-                    }}
-                    onCreateAttachment={async (values) => {
-                      await createIssueAttachment.mutateAsync(values);
-                    }}
-                    onCreateWorkProduct={async (values) => {
-                      await createIssueWorkProduct.mutateAsync(values);
-                    }}
-                  />
-                ) : null}
+                  {section === "costs" ? (
+                    <CostSection
+                      overview={costOverview.data}
+                      financeEvents={financeEvents.data ?? []}
+                      quotaWindows={quotaWindows.data ?? []}
+                      agents={agents.data ?? []}
+                      projects={projects.data ?? []}
+                    />
+                  ) : null}
 
-                {section === "skills" ? (
-                  <SkillSection
-                    skills={skills.data ?? []}
-                    onCreateSkill={async (values) => {
-                      await createSkill.mutateAsync(values);
-                    }}
-                    onScanSkills={async (values) => {
-                      await scanSkills.mutateAsync(values);
-                    }}
-                  />
-                ) : null}
+                  {section === "workspaces" ? (
+                    <WorkspaceSection
+                      projects={activeProjects}
+                      issues={issues.data ?? []}
+                      selectedWorkspaceProjectId={selectedWorkspaceProjectId}
+                      setSelectedWorkspaceProjectId={
+                        setSelectedWorkspaceProjectId
+                      }
+                      projectWorkspaces={projectWorkspaces.data ?? []}
+                      executionWorkspaces={executionWorkspaces.data ?? []}
+                      onCreateProjectWorkspace={async (values) => {
+                        await createProjectWorkspace.mutateAsync(values);
+                      }}
+                      onCreateExecutionWorkspace={async (values) => {
+                        await createExecutionWorkspace.mutateAsync(values);
+                      }}
+                    />
+                  ) : null}
 
-                {section === "plugins" ? (
-                  <PluginSection
-                    plugins={plugins.data ?? []}
-                    selectedPluginId={selectedPluginId}
-                    setSelectedPluginId={setSelectedPluginId}
-                    pluginHealth={pluginHealth.data ?? null}
-                    actionResult={pluginActionResult}
-                    onCreatePlugin={async (values) => {
-                      await createPlugin.mutateAsync(values);
-                    }}
-                    onSetPluginStatus={async (pluginId, status) => {
-                      await setPluginStatus.mutateAsync({ pluginId, status });
-                    }}
-                    onInvokeTool={async (values) => {
-                      await invokePluginTool.mutateAsync(values);
-                    }}
-                    onTriggerJob={async (values) => {
-                      await triggerPluginJob.mutateAsync(values);
-                    }}
-                    onTriggerWebhook={async (values) => {
-                      await triggerPluginWebhook.mutateAsync(values);
-                    }}
-                  />
-                ) : null}
+                  {section === "issues" ? (
+                    <IssueOpsSection
+                      issues={issues.data ?? []}
+                      selectedIssueId={selectedIssueId}
+                      setSelectedIssueId={setSelectedIssueId}
+                      issueDocuments={issueDocuments.data ?? []}
+                      selectedDocument={selectedDocument}
+                      setSelectedDocumentId={setSelectedDocumentId}
+                      issueDocumentRevisions={issueDocumentRevisions.data ?? []}
+                      issueAttachments={issueAttachments.data ?? []}
+                      issueWorkProducts={issueWorkProducts.data ?? []}
+                      onCreateDocument={async (values) => {
+                        await createIssueDocument.mutateAsync(values);
+                      }}
+                      onUpdateDocument={async (values) => {
+                        await updateIssueDocument.mutateAsync(values);
+                      }}
+                      onCreateAttachment={async (values) => {
+                        await createIssueAttachment.mutateAsync(values);
+                      }}
+                      onCreateWorkProduct={async (values) => {
+                        await createIssueWorkProduct.mutateAsync(values);
+                      }}
+                    />
+                  ) : null}
 
-                {section === "secrets" ? (
-                  <SecretSection
-                    secrets={secrets.data ?? []}
-                    onCreateSecret={async (values) => {
-                      await createSecret.mutateAsync(values);
-                    }}
-                  />
-                ) : null}
-              </>
-            )}
+                  {section === "skills" ? (
+                    <SkillSection
+                      skills={skills.data ?? []}
+                      onCreateSkill={async (values) => {
+                        await createSkill.mutateAsync(values);
+                      }}
+                      onScanSkills={async (values) => {
+                        await scanSkills.mutateAsync(values);
+                      }}
+                    />
+                  ) : null}
+
+                  {section === "plugins" ? (
+                    <PluginSection
+                      plugins={plugins.data ?? []}
+                      selectedPluginId={selectedPluginId}
+                      setSelectedPluginId={setSelectedPluginId}
+                      pluginHealth={pluginHealth.data ?? null}
+                      actionResult={pluginActionResult}
+                      onCreatePlugin={async (values) => {
+                        await createPlugin.mutateAsync(values);
+                      }}
+                      onSetPluginStatus={async (pluginId, status) => {
+                        await setPluginStatus.mutateAsync({ pluginId, status });
+                      }}
+                      onInvokeTool={async (values) => {
+                        await invokePluginTool.mutateAsync(values);
+                      }}
+                      onTriggerJob={async (values) => {
+                        await triggerPluginJob.mutateAsync(values);
+                      }}
+                      onTriggerWebhook={async (values) => {
+                        await triggerPluginWebhook.mutateAsync(values);
+                      }}
+                    />
+                  ) : null}
+
+                  {section === "secrets" ? (
+                    <SecretSection
+                      secrets={secrets.data ?? []}
+                      onCreateSecret={async (values) => {
+                        await createSecret.mutateAsync(values);
+                      }}
+                    />
+                  ) : null}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
       {commandPaletteOpen ? (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/65 px-4 py-18 backdrop-blur-sm">
-          <div className="w-full max-w-2xl rounded-[2rem] border border-white/10 bg-zinc-950/95 p-5 shadow-2xl shadow-black/40">
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 px-4 py-18 backdrop-blur-md">
+          <div className="paper-panel w-full max-w-3xl rounded-[2rem] border p-5 shadow-2xl shadow-black/40">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-cyan-300">Command palette</p>
-                <h2 className="mt-2 text-xl font-semibold text-white">Jump to an operator section</h2>
+                <p className="paper-shell-label text-[0.7rem] font-medium">
+                  Command palette
+                </p>
+                <h2 className="mt-2 text-xl font-semibold text-white">
+                  Jump to an operator section
+                </h2>
               </div>
-              <button className="rounded-full border border-white/10 px-3 py-1 text-sm text-zinc-300" onClick={() => setCommandPaletteOpen(false)}>
+              <button
+                type="button"
+                className="rounded-full border border-white/10 px-3 py-1 text-sm text-zinc-300"
+                onClick={() => setCommandPaletteOpen(false)}
+              >
                 Close
               </button>
             </div>
+            <label htmlFor="command-palette-search" className="sr-only">
+              Search commands
+            </label>
+            <input
+              id="command-palette-search"
+              ref={commandInputRef}
+              className="paper-input mb-4 w-full rounded-[1.4rem] px-4 py-3 text-sm"
+              placeholder="Search sections, companies, and shell actions"
+              value={commandQuery}
+              onChange={(event) => {
+                setCommandQuery(event.target.value);
+                setActiveCommandIndex(0);
+              }}
+            />
             <div className="grid gap-3">
-              {sectionItems.map((item) => (
-                <button
-                  key={item.id}
-                  className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-left hover:border-cyan-300/50"
-                  onClick={() => {
-                    setCommandPaletteOpen(false);
-                    navigate(`/app/${item.id}`);
-                  }}
-                >
-                  <div className="font-medium text-white">{item.label}</div>
-                  <div className="mt-1 text-sm text-zinc-400">{item.blurb}</div>
-                </button>
-              ))}
+              {filteredCommandActions.length === 0 ? (
+                <EmptyState message="No commands match that search yet. Try a section name, company slug, or session action." />
+              ) : (
+                filteredCommandActions.map((action, index) => (
+                  <CommandActionRow
+                    key={action.id}
+                    action={action}
+                    active={index === activeCommandIndex}
+                    onClick={action.run}
+                  />
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -1315,19 +1931,55 @@ export function DashboardPage() {
 function OverviewSection(props: {
   company: Company;
   companySettingsInitialValues?: Record<string, string>;
-  members: Array<{ id: string; role: string; createdAt: string; user: { name: string; email: string } }>;
+  members: Array<{
+    id: string;
+    role: string;
+    createdAt: string;
+    user: { name: string; email: string };
+  }>;
   departments: Department[];
   positions: Position[];
-  invites: Array<{ id: string; email: string; role: string; token: string; acceptedAt: string | null; expiresAt: string; createdAt: string }>;
+  invites: Array<{
+    id: string;
+    email: string;
+    role: string;
+    token: string;
+    acceptedAt: string | null;
+    expiresAt: string;
+    createdAt: string;
+  }>;
   joinRequests: JoinRequest[];
   pendingInvites: number;
   pendingJoinRequests: number;
   activity: ActivityEvent[];
-  goals: Array<{ id: string; title: string; description: string | null; level: string; status: string; parentId: string | null; createdAt: string }>;
-  projects: Array<{ id: string; name: string; description: string | null; status: string; slug: string; goalId: string | null; targetDate: string | null; color: string | null; createdAt: string }>;
+  goals: Array<{
+    id: string;
+    title: string;
+    description: string | null;
+    level: string;
+    status: string;
+    parentId: string | null;
+    createdAt: string;
+  }>;
+  projects: Array<{
+    id: string;
+    name: string;
+    description: string | null;
+    status: string;
+    slug: string;
+    goalId: string | null;
+    targetDate: string | null;
+    color: string | null;
+    createdAt: string;
+  }>;
   issues: Issue[];
   approvals: Array<{ id: string; title: string; description: string | null }>;
-  heartbeats: Array<{ id: string; triggerKind: string; error: string | null; status: string }>;
+  heartbeats: Array<{
+    id: string;
+    triggerKind: string;
+    error: string | null;
+    status: string;
+  }>;
   agents: Array<{
     id: string;
     name: string;
@@ -1348,10 +2000,17 @@ function OverviewSection(props: {
   projectOptions: Array<{ label: string; value: string }>;
   issueOptions: Array<{ label: string; value: string }>;
   onWakeAgent(agentId: string): Promise<unknown>;
-  onApprove(approvalId: string, status: "approved" | "rejected"): Promise<unknown>;
+  onApprove(
+    approvalId: string,
+    status: "approved" | "rejected",
+  ): Promise<unknown>;
   onUpdateCompany(values: Record<string, string>): Promise<void>;
   onCreateInvite(values: Record<string, string>): Promise<void>;
-  onResolveJoinRequest(joinRequestId: string, status: "approved" | "rejected", role?: string): Promise<unknown>;
+  onResolveJoinRequest(
+    joinRequestId: string,
+    status: "approved" | "rejected",
+    role?: string,
+  ): Promise<unknown>;
   onCreateGoal(values: Record<string, string>): Promise<void>;
   onCreateProject(values: Record<string, string>): Promise<void>;
   onCreateIssue(values: Record<string, string>): Promise<void>;
@@ -1364,8 +2023,17 @@ function OverviewSection(props: {
   onDeletePosition(positionId: string): Promise<void>;
   onUpdateAgentOrgProfile(values: Record<string, string>): Promise<void>;
 }) {
-  const departmentById = useMemo(() => new Map(props.departments.map((department) => [department.id, department])), [props.departments]);
-  const positionById = useMemo(() => new Map(props.positions.map((position) => [position.id, position])), [props.positions]);
+  const departmentById = useMemo(
+    () =>
+      new Map(
+        props.departments.map((department) => [department.id, department]),
+      ),
+    [props.departments],
+  );
+  const positionById = useMemo(
+    () => new Map(props.positions.map((position) => [position.id, position])),
+    [props.positions],
+  );
 
   return (
     <>
@@ -1378,7 +2046,12 @@ function OverviewSection(props: {
             fields={[
               { name: "slug", label: "Slug" },
               { name: "name", label: "Name" },
-              { name: "description", label: "Description", type: "textarea", rows: 3 },
+              {
+                name: "description",
+                label: "Description",
+                type: "textarea",
+                rows: 3,
+              },
               {
                 name: "status",
                 label: "Status",
@@ -1389,7 +2062,11 @@ function OverviewSection(props: {
                 ],
               },
               { name: "brandColor", label: "Brand color" },
-              { name: "monthlyBudgetCents", label: "Monthly budget (cents)", type: "number" },
+              {
+                name: "monthlyBudgetCents",
+                label: "Monthly budget (cents)",
+                type: "number",
+              },
             ]}
             onSubmit={props.onUpdateCompany}
           />
@@ -1401,15 +2078,29 @@ function OverviewSection(props: {
           ) : (
             <div className="grid gap-3">
               {props.members.map((member) => (
-                <article key={member.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <article
+                  key={member.id}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="font-medium text-white">{member.user.name}</h3>
-                      <p className="text-sm text-zinc-400">{member.user.email}</p>
+                      <h3 className="font-medium text-white">
+                        {member.user.name}
+                      </h3>
+                      <p className="text-sm text-zinc-400">
+                        {member.user.email}
+                      </p>
                     </div>
-                    <Badge label={member.role} tone={STATUS_TONES[member.role] ?? "bg-white/10 text-zinc-200"} />
+                    <Badge
+                      label={member.role}
+                      tone={
+                        STATUS_TONES[member.role] ?? "bg-white/10 text-zinc-200"
+                      }
+                    />
                   </div>
-                  <div className="mt-3 text-xs text-zinc-500">Joined {formatDate(member.createdAt)}</div>
+                  <div className="mt-3 text-xs text-zinc-500">
+                    Joined {formatDate(member.createdAt)}
+                  </div>
                 </article>
               ))}
             </div>
@@ -1421,11 +2112,18 @@ function OverviewSection(props: {
             <InlineForm
               submitLabel="Create invite"
               fields={[
-                { name: "email", label: "Email", placeholder: "teammate@example.com" },
+                {
+                  name: "email",
+                  label: "Email",
+                  placeholder: "teammate@example.com",
+                },
                 {
                   name: "role",
                   label: "Role",
-                  options: MEMBERSHIP_ROLES.map((role) => ({ label: role, value: role })),
+                  options: MEMBERSHIP_ROLES.map((role) => ({
+                    label: role,
+                    value: role,
+                  })),
                   emptyLabel: "viewer",
                 },
               ]}
@@ -1436,15 +2134,27 @@ function OverviewSection(props: {
             ) : (
               <div className="grid gap-3">
                 {props.invites.slice(0, 6).map((invite) => (
-                  <article key={invite.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <article
+                    key={invite.id}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                  >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
-                        <h3 className="font-medium text-white">{invite.email}</h3>
+                        <h3 className="font-medium text-white">
+                          {invite.email}
+                        </h3>
                         <div className="mt-2 flex flex-wrap gap-2">
-                          <Badge label={invite.role} tone="bg-cyan-300/15 text-cyan-100" />
+                          <Badge
+                            label={invite.role}
+                            tone="bg-cyan-300/15 text-cyan-100"
+                          />
                           <Badge
                             label={invite.acceptedAt ? "accepted" : "pending"}
-                            tone={invite.acceptedAt ? "bg-emerald-300/20 text-emerald-200" : "bg-amber-300/20 text-amber-100"}
+                            tone={
+                              invite.acceptedAt
+                                ? "bg-emerald-300/20 text-emerald-200"
+                                : "bg-amber-300/20 text-amber-100"
+                            }
                           />
                         </div>
                       </div>
@@ -1471,15 +2181,22 @@ function OverviewSection(props: {
           ) : (
             <div className="grid gap-3">
               {props.activity.slice(0, 10).map((event) => (
-                <article key={event.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <article
+                  key={event.id}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="font-medium text-white">{event.summary}</h3>
+                      <h3 className="font-medium text-white">
+                        {event.summary}
+                      </h3>
                       <p className="text-sm text-zinc-400">
                         {event.kind} · {event.targetType}
                       </p>
                     </div>
-                    <div className="text-xs text-zinc-500">{formatDateTime(event.createdAt)}</div>
+                    <div className="text-xs text-zinc-500">
+                      {formatDateTime(event.createdAt)}
+                    </div>
                   </div>
                 </article>
               ))}
@@ -1493,43 +2210,80 @@ function OverviewSection(props: {
           ) : (
             <div className="grid gap-3">
               {props.joinRequests.slice(0, 6).map((joinRequest) => (
-                <article key={joinRequest.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <article
+                  key={joinRequest.id}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="space-y-2">
                       <h3 className="font-medium text-white">
                         {joinRequest.kind === "human"
-                          ? joinRequest.email ?? "Human join request"
-                          : joinRequest.agentDraft?.name ?? "Agent join request"}
+                          ? (joinRequest.email ?? "Human join request")
+                          : (joinRequest.agentDraft?.name ??
+                            "Agent join request")}
                       </h3>
                       <div className="flex flex-wrap gap-2">
-                        <Badge label={joinRequest.kind} tone="bg-cyan-300/15 text-cyan-100" />
-                        <Badge label={joinRequest.status} tone={STATUS_TONES[joinRequest.status] ?? "bg-white/10 text-zinc-200"} />
-                        {joinRequest.role ? <Badge label={joinRequest.role} tone="bg-white/10 text-zinc-200" /> : null}
-                        {joinRequest.kind === "agent" && joinRequest.agentDraft?.adapterType ? (
-                          <Badge label={joinRequest.agentDraft.adapterType} tone="bg-amber-300/15 text-amber-100" />
+                        <Badge
+                          label={joinRequest.kind}
+                          tone="bg-cyan-300/15 text-cyan-100"
+                        />
+                        <Badge
+                          label={joinRequest.status}
+                          tone={
+                            STATUS_TONES[joinRequest.status] ??
+                            "bg-white/10 text-zinc-200"
+                          }
+                        />
+                        {joinRequest.role ? (
+                          <Badge
+                            label={joinRequest.role}
+                            tone="bg-white/10 text-zinc-200"
+                          />
+                        ) : null}
+                        {joinRequest.kind === "agent" &&
+                        joinRequest.agentDraft?.adapterType ? (
+                          <Badge
+                            label={joinRequest.agentDraft.adapterType}
+                            tone="bg-amber-300/15 text-amber-100"
+                          />
                         ) : null}
                       </div>
-                      {joinRequest.note ? <p className="text-sm text-zinc-400">{joinRequest.note}</p> : null}
+                      {joinRequest.note ? (
+                        <p className="text-sm text-zinc-400">
+                          {joinRequest.note}
+                        </p>
+                      ) : null}
                     </div>
                     <div className="text-right text-xs text-zinc-500">
                       <div>Created {formatDate(joinRequest.createdAt)}</div>
-                      {joinRequest.resolvedAt ? <div>Resolved {formatDate(joinRequest.resolvedAt)}</div> : null}
+                      {joinRequest.resolvedAt ? (
+                        <div>Resolved {formatDate(joinRequest.resolvedAt)}</div>
+                      ) : null}
                     </div>
                   </div>
                   {joinRequest.status === "pending" ? (
                     <div className="mt-4 flex flex-wrap gap-2">
                       <button
+                        type="button"
                         className="rounded-full bg-emerald-300 px-3 py-1 text-xs font-medium text-zinc-950"
                         onClick={() => {
-                          void props.onResolveJoinRequest(joinRequest.id, "approved", joinRequest.role ?? undefined);
+                          void props.onResolveJoinRequest(
+                            joinRequest.id,
+                            "approved",
+                            joinRequest.role ?? undefined,
+                          );
                         }}
                       >
                         Approve
                       </button>
                       <button
+                        type="button"
                         className="rounded-full bg-rose-300 px-3 py-1 text-xs font-medium text-zinc-950"
                         onClick={() => {
-                          void props.onResolveJoinRequest(joinRequest.id, "rejected");
+                          void props.onResolveJoinRequest(
+                            joinRequest.id,
+                            "rejected",
+                          );
                         }}
                       >
                         Reject
@@ -1549,8 +2303,18 @@ function OverviewSection(props: {
               fields={[
                 { name: "slug", label: "Slug", placeholder: "engineering" },
                 { name: "name", label: "Name", placeholder: "Engineering" },
-                { name: "description", label: "Description", type: "textarea", rows: 2 },
-                { name: "headAgentId", label: "Head agent", options: props.agentOptions, emptyLabel: "No head agent" },
+                {
+                  name: "description",
+                  label: "Description",
+                  type: "textarea",
+                  rows: 2,
+                },
+                {
+                  name: "headAgentId",
+                  label: "Head agent",
+                  options: props.agentOptions,
+                  emptyLabel: "No head agent",
+                },
               ]}
               onSubmit={props.onCreateDepartment}
             />
@@ -1559,21 +2323,44 @@ function OverviewSection(props: {
             ) : (
               <div className="grid gap-3">
                 {props.departments.map((department) => (
-                  <article key={department.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <article
+                    key={department.id}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                  >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="space-y-2">
-                        <h3 className="font-medium text-white">{department.name}</h3>
-                        <p className="text-xs text-zinc-500">{department.slug}</p>
-                        {department.description ? <p className="text-sm text-zinc-400">{department.description}</p> : null}
+                        <h3 className="font-medium text-white">
+                          {department.name}
+                        </h3>
+                        <p className="text-xs text-zinc-500">
+                          {department.slug}
+                        </p>
+                        {department.description ? (
+                          <p className="text-sm text-zinc-400">
+                            {department.description}
+                          </p>
+                        ) : null}
                         <div className="flex flex-wrap gap-2">
                           <Badge
-                            label={department.lastWorkSpecTaskId ? "MD task queued" : "MD task pending"}
-                            tone={department.lastWorkSpecTaskId ? "bg-emerald-300/20 text-emerald-200" : "bg-amber-300/20 text-amber-100"}
+                            label={
+                              department.lastWorkSpecTaskId
+                                ? "MD task queued"
+                                : "MD task pending"
+                            }
+                            tone={
+                              department.lastWorkSpecTaskId
+                                ? "bg-emerald-300/20 text-emerald-200"
+                                : "bg-amber-300/20 text-amber-100"
+                            }
                           />
-                          <Badge label={department.workSpecRelativePath} tone="bg-white/10 text-zinc-200" />
+                          <Badge
+                            label={department.workSpecRelativePath}
+                            tone="bg-white/10 text-zinc-200"
+                          />
                         </div>
                       </div>
                       <button
+                        type="button"
                         className="rounded-full bg-rose-300 px-3 py-1 text-xs font-medium text-zinc-950"
                         onClick={() => {
                           void props.onDeleteDepartment(department.id);
@@ -1593,11 +2380,25 @@ function OverviewSection(props: {
                           headAgentId: department.headAgentId ?? "",
                         }}
                         fields={[
-                          { name: "departmentId", label: "Department id", placeholder: department.id },
+                          {
+                            name: "departmentId",
+                            label: "Department id",
+                            placeholder: department.id,
+                          },
                           { name: "slug", label: "Slug" },
                           { name: "name", label: "Name" },
-                          { name: "description", label: "Description", type: "textarea", rows: 2 },
-                          { name: "headAgentId", label: "Head agent", options: props.agentOptions, emptyLabel: "No head agent" },
+                          {
+                            name: "description",
+                            label: "Description",
+                            type: "textarea",
+                            rows: 2,
+                          },
+                          {
+                            name: "headAgentId",
+                            label: "Head agent",
+                            options: props.agentOptions,
+                            emptyLabel: "No head agent",
+                          },
                         ]}
                         onSubmit={props.onUpdateDepartment}
                       />
@@ -1616,8 +2417,17 @@ function OverviewSection(props: {
               initialValues={{ isExecutive: "false" }}
               fields={[
                 { name: "slug", label: "Slug", placeholder: "cto" },
-                { name: "name", label: "Name", placeholder: "Chief Technology Officer" },
-                { name: "description", label: "Description", type: "textarea", rows: 2 },
+                {
+                  name: "name",
+                  label: "Name",
+                  placeholder: "Chief Technology Officer",
+                },
+                {
+                  name: "description",
+                  label: "Description",
+                  type: "textarea",
+                  rows: 2,
+                },
                 {
                   name: "isExecutive",
                   label: "Executive",
@@ -1635,15 +2445,30 @@ function OverviewSection(props: {
             ) : (
               <div className="grid gap-3">
                 {props.positions.map((position) => (
-                  <article key={position.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <article
+                    key={position.id}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                  >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="space-y-2">
-                        <h3 className="font-medium text-white">{position.name}</h3>
+                        <h3 className="font-medium text-white">
+                          {position.name}
+                        </h3>
                         <p className="text-xs text-zinc-500">{position.slug}</p>
-                        {position.description ? <p className="text-sm text-zinc-400">{position.description}</p> : null}
-                        {position.isExecutive ? <Badge label="C-level" tone="bg-cyan-300/15 text-cyan-100" /> : null}
+                        {position.description ? (
+                          <p className="text-sm text-zinc-400">
+                            {position.description}
+                          </p>
+                        ) : null}
+                        {position.isExecutive ? (
+                          <Badge
+                            label="C-level"
+                            tone="bg-cyan-300/15 text-cyan-100"
+                          />
+                        ) : null}
                       </div>
                       <button
+                        type="button"
                         className="rounded-full bg-rose-300 px-3 py-1 text-xs font-medium text-zinc-950"
                         onClick={() => {
                           void props.onDeletePosition(position.id);
@@ -1663,10 +2488,19 @@ function OverviewSection(props: {
                           isExecutive: String(position.isExecutive),
                         }}
                         fields={[
-                          { name: "positionId", label: "Position id", placeholder: position.id },
+                          {
+                            name: "positionId",
+                            label: "Position id",
+                            placeholder: position.id,
+                          },
                           { name: "slug", label: "Slug" },
                           { name: "name", label: "Name" },
-                          { name: "description", label: "Description", type: "textarea", rows: 2 },
+                          {
+                            name: "description",
+                            label: "Description",
+                            type: "textarea",
+                            rows: 2,
+                          },
                           {
                             name: "isExecutive",
                             label: "Executive",
@@ -1696,12 +2530,39 @@ function OverviewSection(props: {
               fields={[
                 { name: "slug", label: "Slug", placeholder: "cto" },
                 { name: "name", label: "Name", placeholder: "CTO" },
-                { name: "title", label: "Custom title", placeholder: "Chief Technology Officer" },
-                { name: "departmentId", label: "Department", options: props.departmentOptions, emptyLabel: "Unassigned" },
-                { name: "positionId", label: "Position", options: props.positionOptions, emptyLabel: "Unassigned" },
-                { name: "capabilities", label: "Capabilities", type: "textarea", rows: 3 },
-                { name: "adapterType", label: "Adapter type", placeholder: "http_api / openclaw_gateway / codex / hermes" },
-                { name: "budgetMonthlyCents", label: "Budget (cents)", type: "number" },
+                {
+                  name: "title",
+                  label: "Custom title",
+                  placeholder: "Chief Technology Officer",
+                },
+                {
+                  name: "departmentId",
+                  label: "Department",
+                  options: props.departmentOptions,
+                  emptyLabel: "Unassigned",
+                },
+                {
+                  name: "positionId",
+                  label: "Position",
+                  options: props.positionOptions,
+                  emptyLabel: "Unassigned",
+                },
+                {
+                  name: "capabilities",
+                  label: "Capabilities",
+                  type: "textarea",
+                  rows: 3,
+                },
+                {
+                  name: "adapterType",
+                  label: "Adapter type",
+                  placeholder: "http_api / openclaw_gateway / codex / hermes",
+                },
+                {
+                  name: "budgetMonthlyCents",
+                  label: "Budget (cents)",
+                  type: "number",
+                },
               ]}
               onSubmit={props.onCreateAgent}
             />
@@ -1711,22 +2572,47 @@ function OverviewSection(props: {
             <InlineForm
               submitLabel="Add goal"
               fields={[
-                { name: "title", label: "Title", placeholder: "Reach product-market fit" },
-                { name: "description", label: "Description", type: "textarea", rows: 3 },
+                {
+                  name: "title",
+                  label: "Title",
+                  placeholder: "Reach product-market fit",
+                },
+                {
+                  name: "description",
+                  label: "Description",
+                  type: "textarea",
+                  rows: 3,
+                },
                 {
                   name: "level",
                   label: "Level",
-                  options: GOAL_LEVELS.map((level) => ({ label: level, value: level })),
+                  options: GOAL_LEVELS.map((level) => ({
+                    label: level,
+                    value: level,
+                  })),
                   emptyLabel: "task",
                 },
                 {
                   name: "status",
                   label: "Status",
-                  options: GOAL_STATUSES.map((status) => ({ label: status, value: status })),
+                  options: GOAL_STATUSES.map((status) => ({
+                    label: status,
+                    value: status,
+                  })),
                   emptyLabel: "planned",
                 },
-                { name: "parentId", label: "Parent goal", options: props.goalOptions, emptyLabel: "No parent goal" },
-                { name: "ownerAgentId", label: "Owner agent", options: props.agentOptions, emptyLabel: "Unassigned" },
+                {
+                  name: "parentId",
+                  label: "Parent goal",
+                  options: props.goalOptions,
+                  emptyLabel: "No parent goal",
+                },
+                {
+                  name: "ownerAgentId",
+                  label: "Owner agent",
+                  options: props.agentOptions,
+                  emptyLabel: "Unassigned",
+                },
               ]}
               onSubmit={props.onCreateGoal}
             />
@@ -1738,17 +2624,39 @@ function OverviewSection(props: {
               fields={[
                 { name: "slug", label: "Slug", placeholder: "launch-app" },
                 { name: "name", label: "Name", placeholder: "Launch app" },
-                { name: "description", label: "Description", type: "textarea", rows: 3 },
-                { name: "goalId", label: "Linked goal", options: props.goalOptions, emptyLabel: "No linked goal" },
+                {
+                  name: "description",
+                  label: "Description",
+                  type: "textarea",
+                  rows: 3,
+                },
+                {
+                  name: "goalId",
+                  label: "Linked goal",
+                  options: props.goalOptions,
+                  emptyLabel: "No linked goal",
+                },
                 {
                   name: "status",
                   label: "Status",
-                  options: PROJECT_STATUSES.map((status) => ({ label: status, value: status })),
+                  options: PROJECT_STATUSES.map((status) => ({
+                    label: status,
+                    value: status,
+                  })),
                   emptyLabel: "backlog",
                 },
                 { name: "targetDate", label: "Target date", type: "date" },
-                { name: "color", label: "Accent color", placeholder: "#22c55e" },
-                { name: "ownerAgentId", label: "Owner agent", options: props.agentOptions, emptyLabel: "Unassigned" },
+                {
+                  name: "color",
+                  label: "Accent color",
+                  placeholder: "#22c55e",
+                },
+                {
+                  name: "ownerAgentId",
+                  label: "Owner agent",
+                  options: props.agentOptions,
+                  emptyLabel: "Unassigned",
+                },
               ]}
               onSubmit={props.onCreateProject}
             />
@@ -1758,22 +2666,57 @@ function OverviewSection(props: {
             <InlineForm
               submitLabel="Add issue"
               fields={[
-                { name: "title", label: "Title", placeholder: "Ship onboarding flow" },
-                { name: "description", label: "Description", type: "textarea", rows: 4 },
-                { name: "projectId", label: "Project", options: props.projectOptions, emptyLabel: "No project" },
-                { name: "goalId", label: "Goal", options: props.goalOptions, emptyLabel: "No goal" },
-                { name: "parentId", label: "Parent issue", options: props.issueOptions, emptyLabel: "No parent issue" },
-                { name: "assigneeAgentId", label: "Assignee", options: props.agentOptions, emptyLabel: "Unassigned" },
+                {
+                  name: "title",
+                  label: "Title",
+                  placeholder: "Ship onboarding flow",
+                },
+                {
+                  name: "description",
+                  label: "Description",
+                  type: "textarea",
+                  rows: 4,
+                },
+                {
+                  name: "projectId",
+                  label: "Project",
+                  options: props.projectOptions,
+                  emptyLabel: "No project",
+                },
+                {
+                  name: "goalId",
+                  label: "Goal",
+                  options: props.goalOptions,
+                  emptyLabel: "No goal",
+                },
+                {
+                  name: "parentId",
+                  label: "Parent issue",
+                  options: props.issueOptions,
+                  emptyLabel: "No parent issue",
+                },
+                {
+                  name: "assigneeAgentId",
+                  label: "Assignee",
+                  options: props.agentOptions,
+                  emptyLabel: "Unassigned",
+                },
                 {
                   name: "status",
                   label: "Status",
-                  options: ISSUE_STATUSES.map((status) => ({ label: status, value: status })),
+                  options: ISSUE_STATUSES.map((status) => ({
+                    label: status,
+                    value: status,
+                  })),
                   emptyLabel: "backlog",
                 },
                 {
                   name: "priority",
                   label: "Priority",
-                  options: ISSUE_PRIORITIES.map((priority) => ({ label: priority, value: priority })),
+                  options: ISSUE_PRIORITIES.map((priority) => ({
+                    label: priority,
+                    value: priority,
+                  })),
                   emptyLabel: "medium",
                 },
               ]}
@@ -1789,14 +2732,27 @@ function OverviewSection(props: {
             ) : (
               <div className="grid gap-3">
                 {props.goals.map((goal) => (
-                  <article key={goal.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <article
+                    key={goal.id}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                  >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="space-y-2">
                         <h3 className="font-medium text-white">{goal.title}</h3>
-                        {goal.description ? <p className="text-sm text-zinc-400">{goal.description}</p> : null}
+                        {goal.description ? (
+                          <p className="text-sm text-zinc-400">
+                            {goal.description}
+                          </p>
+                        ) : null}
                         <div className="flex flex-wrap gap-2">
-                          <Badge label={goal.level} tone="bg-white/10 text-zinc-200" />
-                          <Badge label={goal.status} tone={STATUS_TONES[goal.status]} />
+                          <Badge
+                            label={goal.level}
+                            tone="bg-white/10 text-zinc-200"
+                          />
+                          <Badge
+                            label={goal.status}
+                            tone={STATUS_TONES[goal.status]}
+                          />
                           {goal.parentId ? (
                             <Badge
                               label={`Parent: ${props.goalById.get(goal.parentId)?.title ?? goal.parentId.slice(0, 8)}`}
@@ -1805,7 +2761,9 @@ function OverviewSection(props: {
                           ) : null}
                         </div>
                       </div>
-                      <div className="text-right text-xs text-zinc-500">{formatDate(goal.createdAt)}</div>
+                      <div className="text-right text-xs text-zinc-500">
+                        {formatDate(goal.createdAt)}
+                      </div>
                     </div>
                   </article>
                 ))}
@@ -1819,29 +2777,54 @@ function OverviewSection(props: {
             ) : (
               <div className="grid gap-3">
                 {props.projects.map((project) => (
-                  <article key={project.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <article
+                    key={project.id}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                  >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="space-y-2">
                         <div className="flex items-center gap-3">
                           {project.color ? (
-                            <span className="h-3 w-3 rounded-full border border-white/20" style={{ backgroundColor: project.color }} />
+                            <span
+                              className="h-3 w-3 rounded-full border border-white/20"
+                              style={{ backgroundColor: project.color }}
+                            />
                           ) : null}
-                          <h3 className="font-medium text-white">{project.name}</h3>
+                          <h3 className="font-medium text-white">
+                            {project.name}
+                          </h3>
                         </div>
-                        {project.description ? <p className="text-sm text-zinc-400">{project.description}</p> : null}
+                        {project.description ? (
+                          <p className="text-sm text-zinc-400">
+                            {project.description}
+                          </p>
+                        ) : null}
                         <div className="flex flex-wrap gap-2">
-                          <Badge label={project.status} tone={STATUS_TONES[project.status]} />
-                          <Badge label={project.slug} tone="bg-white/10 text-zinc-200" />
+                          <Badge
+                            label={project.status}
+                            tone={STATUS_TONES[project.status]}
+                          />
+                          <Badge
+                            label={project.slug}
+                            tone="bg-white/10 text-zinc-200"
+                          />
                           {project.goalId ? (
                             <Badge
                               label={`Goal: ${props.goalById.get(project.goalId)?.title ?? project.goalId.slice(0, 8)}`}
                               tone="bg-cyan-300/15 text-cyan-100"
                             />
                           ) : null}
-                          {project.targetDate ? <Badge label={`Target: ${project.targetDate}`} tone="bg-amber-300/15 text-amber-100" /> : null}
+                          {project.targetDate ? (
+                            <Badge
+                              label={`Target: ${project.targetDate}`}
+                              tone="bg-amber-300/15 text-amber-100"
+                            />
+                          ) : null}
                         </div>
                       </div>
-                      <div className="text-right text-xs text-zinc-500">{formatDate(project.createdAt)}</div>
+                      <div className="text-right text-xs text-zinc-500">
+                        {formatDate(project.createdAt)}
+                      </div>
                     </div>
                   </article>
                 ))}
@@ -1855,14 +2838,29 @@ function OverviewSection(props: {
             ) : (
               <div className="grid gap-3">
                 {props.issues.map((issue) => (
-                  <article key={issue.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <article
+                    key={issue.id}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                  >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="space-y-2">
-                        <h3 className="font-medium text-white">{issue.title}</h3>
-                        {issue.description ? <p className="text-sm text-zinc-400">{issue.description}</p> : null}
+                        <h3 className="font-medium text-white">
+                          {issue.title}
+                        </h3>
+                        {issue.description ? (
+                          <p className="text-sm text-zinc-400">
+                            {issue.description}
+                          </p>
+                        ) : null}
                         <div className="flex flex-wrap gap-2">
-                          <Badge label={issue.status} tone={STATUS_TONES[issue.status]} />
-                          <Badge label={issue.priority} tone="bg-rose-300/15 text-rose-100" />
+                          <Badge
+                            label={issue.status}
+                            tone={STATUS_TONES[issue.status]}
+                          />
+                          <Badge
+                            label={issue.priority}
+                            tone="bg-rose-300/15 text-rose-100"
+                          />
                           {issue.projectId ? (
                             <Badge
                               label={`Project: ${props.projectById.get(issue.projectId)?.name ?? issue.projectId.slice(0, 8)}`}
@@ -1877,7 +2875,9 @@ function OverviewSection(props: {
                           ) : null}
                         </div>
                       </div>
-                      <div className="text-right text-xs text-zinc-500">{formatDate(issue.createdAt)}</div>
+                      <div className="text-right text-xs text-zinc-500">
+                        {formatDate(issue.createdAt)}
+                      </div>
                     </div>
                   </article>
                 ))}
@@ -1891,11 +2891,16 @@ function OverviewSection(props: {
             ) : (
               <div className="grid gap-3">
                 {props.agents.map((agent) => (
-                  <article key={agent.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <article
+                    key={agent.id}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <h3 className="font-medium text-white">{agent.name}</h3>
-                        <p className="text-sm text-zinc-400">{agent.title ?? agent.adapterType}</p>
+                        <p className="text-sm text-zinc-400">
+                          {agent.title ?? agent.adapterType}
+                        </p>
                         <div className="mt-2 flex flex-wrap gap-2">
                           {agent.departmentId ? (
                             <Badge
@@ -1903,7 +2908,10 @@ function OverviewSection(props: {
                               tone="bg-cyan-300/15 text-cyan-100"
                             />
                           ) : (
-                            <Badge label="Dept: Unassigned" tone="bg-white/10 text-zinc-200" />
+                            <Badge
+                              label="Dept: Unassigned"
+                              tone="bg-white/10 text-zinc-200"
+                            />
                           )}
                           {agent.positionId ? (
                             <Badge
@@ -1911,13 +2919,23 @@ function OverviewSection(props: {
                               tone="bg-violet-300/15 text-violet-100"
                             />
                           ) : (
-                            <Badge label="Position: Unassigned" tone="bg-white/10 text-zinc-200" />
+                            <Badge
+                              label="Position: Unassigned"
+                              tone="bg-white/10 text-zinc-200"
+                            />
                           )}
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <Badge label={agent.status} tone={STATUS_TONES[agent.status] ?? "bg-white/10 text-zinc-200"} />
+                        <Badge
+                          label={agent.status}
+                          tone={
+                            STATUS_TONES[agent.status] ??
+                            "bg-white/10 text-zinc-200"
+                          }
+                        />
                         <button
+                          type="button"
                           className="rounded-full bg-amber-300 px-3 py-1 text-sm font-medium text-zinc-900"
                           onClick={() => {
                             void props.onWakeAgent(agent.id);
@@ -1937,10 +2955,28 @@ function OverviewSection(props: {
                           title: agent.title ?? "",
                         }}
                         fields={[
-                          { name: "agentId", label: "Agent id", placeholder: agent.id },
-                          { name: "departmentId", label: "Department", options: props.departmentOptions, emptyLabel: "Unassigned" },
-                          { name: "positionId", label: "Position", options: props.positionOptions, emptyLabel: "Unassigned" },
-                          { name: "title", label: "Custom title", placeholder: "Optional override title" },
+                          {
+                            name: "agentId",
+                            label: "Agent id",
+                            placeholder: agent.id,
+                          },
+                          {
+                            name: "departmentId",
+                            label: "Department",
+                            options: props.departmentOptions,
+                            emptyLabel: "Unassigned",
+                          },
+                          {
+                            name: "positionId",
+                            label: "Position",
+                            options: props.positionOptions,
+                            emptyLabel: "Unassigned",
+                          },
+                          {
+                            name: "title",
+                            label: "Custom title",
+                            placeholder: "Optional override title",
+                          },
                         ]}
                         onSubmit={props.onUpdateAgentOrgProfile}
                       />
@@ -1957,14 +2993,22 @@ function OverviewSection(props: {
             ) : (
               <div className="grid gap-3">
                 {props.approvals.map((approval) => (
-                  <article key={approval.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <article
+                    key={approval.id}
+                    className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                  >
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <h3 className="font-medium text-white">{approval.title}</h3>
-                        <p className="text-sm text-zinc-400">{approval.description}</p>
+                        <h3 className="font-medium text-white">
+                          {approval.title}
+                        </h3>
+                        <p className="text-sm text-zinc-400">
+                          {approval.description}
+                        </p>
                       </div>
                       <div className="flex gap-2">
                         <button
+                          type="button"
                           className="rounded-full bg-emerald-300 px-3 py-1 text-xs text-zinc-950"
                           onClick={() => {
                             void props.onApprove(approval.id, "approved");
@@ -1973,6 +3017,7 @@ function OverviewSection(props: {
                           Approve
                         </button>
                         <button
+                          type="button"
                           className="rounded-full bg-rose-300 px-3 py-1 text-xs text-zinc-950"
                           onClick={() => {
                             void props.onApprove(approval.id, "rejected");
@@ -1991,27 +3036,56 @@ function OverviewSection(props: {
           <Panel title="Heartbeats and extensions">
             <div className="grid gap-6 md:grid-cols-2">
               <div className="grid gap-3">
-                {(props.heartbeats.length === 0) ? (
+                {props.heartbeats.length === 0 ? (
                   <EmptyState message="No heartbeats recorded yet." />
                 ) : (
                   props.heartbeats.slice(0, 5).map((heartbeat) => (
-                    <article key={heartbeat.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                    <article
+                      key={heartbeat.id}
+                      className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                    >
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <h3 className="font-medium text-white">{heartbeat.triggerKind}</h3>
-                          <p className="text-sm text-zinc-400">{heartbeat.error ?? "Completed cleanly"}</p>
+                          <h3 className="font-medium text-white">
+                            {heartbeat.triggerKind}
+                          </h3>
+                          <p className="text-sm text-zinc-400">
+                            {heartbeat.error ?? "Completed cleanly"}
+                          </p>
                         </div>
-                        <Badge label={heartbeat.status} tone={STATUS_TONES[heartbeat.status] ?? "bg-white/10 text-zinc-200"} />
+                        <Badge
+                          label={heartbeat.status}
+                          tone={
+                            STATUS_TONES[heartbeat.status] ??
+                            "bg-white/10 text-zinc-200"
+                          }
+                        />
                       </div>
                     </article>
                   ))
                 )}
               </div>
               <div className="grid gap-3 text-sm text-zinc-300">
-                <InfoCard title="Pending invites" value={props.pendingInvites} detail="Approval and join pressure on the workspace." />
-                <InfoCard title="Join requests" value={props.pendingJoinRequests} detail="Humans and agents waiting for board approval." />
-                <InfoCard title="Plugins installed" value={props.plugins.length} detail="Installed runtime extensions and tools." />
-                <InfoCard title="Routines configured" value={props.routines.length} detail="Scheduled automations defined for this company." />
+                <InfoCard
+                  title="Pending invites"
+                  value={props.pendingInvites}
+                  detail="Approval and join pressure on the workspace."
+                />
+                <InfoCard
+                  title="Join requests"
+                  value={props.pendingJoinRequests}
+                  detail="Humans and agents waiting for board approval."
+                />
+                <InfoCard
+                  title="Plugins installed"
+                  value={props.plugins.length}
+                  detail="Installed runtime extensions and tools."
+                />
+                <InfoCard
+                  title="Routines configured"
+                  value={props.routines.length}
+                  detail="Scheduled automations defined for this company."
+                />
               </div>
             </div>
           </Panel>
@@ -2028,8 +3102,14 @@ function CostSection(props: {
   agents: Array<{ id: string; name: string }>;
   projects: Array<{ id: string; name: string }>;
 }) {
-  const agentById = useMemo(() => new Map(props.agents.map((agent) => [agent.id, agent.name])), [props.agents]);
-  const projectById = useMemo(() => new Map(props.projects.map((project) => [project.id, project.name])), [props.projects]);
+  const agentById = useMemo(
+    () => new Map(props.agents.map((agent) => [agent.id, agent.name])),
+    [props.agents],
+  );
+  const projectById = useMemo(
+    () => new Map(props.projects.map((project) => [project.id, project.name])),
+    [props.projects],
+  );
 
   if (!props.overview) {
     return (
@@ -2042,9 +3122,21 @@ function CostSection(props: {
   return (
     <>
       <section className="grid gap-4 lg:grid-cols-3">
-        <MetricTile title="Month spend" value={formatCurrency(props.overview.summary.monthSpendCents)} detail="Total debits this month." />
-        <MetricTile title="Budget" value={formatCurrency(props.overview.summary.companyBudgetCents)} detail="Configured company budget ceiling." />
-        <MetricTile title="Utilization" value={`${Math.round(props.overview.summary.utilizationRatio * 100)}%`} detail="Current budget utilization ratio." />
+        <MetricTile
+          title="Month spend"
+          value={formatCurrency(props.overview.summary.monthSpendCents)}
+          detail="Total debits this month."
+        />
+        <MetricTile
+          title="Budget"
+          value={formatCurrency(props.overview.summary.companyBudgetCents)}
+          detail="Configured company budget ceiling."
+        />
+        <MetricTile
+          title="Utilization"
+          value={`${Math.round(props.overview.summary.utilizationRatio * 100)}%`}
+          detail="Current budget utilization ratio."
+        />
       </section>
       <section className="grid gap-6 2xl:grid-cols-2">
         <Panel title="By agent">
@@ -2053,7 +3145,11 @@ function CostSection(props: {
           ) : (
             <div className="grid gap-3">
               {props.overview.byAgent.map((item) => (
-                <SpendRow key={item.agentId} label={agentById.get(item.agentId) ?? item.agentId} amountCents={item.amountCents} />
+                <SpendRow
+                  key={item.agentId}
+                  label={agentById.get(item.agentId) ?? item.agentId}
+                  amountCents={item.amountCents}
+                />
               ))}
             </div>
           )}
@@ -2066,7 +3162,11 @@ function CostSection(props: {
               {props.overview.byProject.map((item) => (
                 <SpendRow
                   key={item.projectId ?? "unassigned"}
-                  label={item.projectId ? projectById.get(item.projectId) ?? item.projectId : "Unassigned"}
+                  label={
+                    item.projectId
+                      ? (projectById.get(item.projectId) ?? item.projectId)
+                      : "Unassigned"
+                  }
                   amountCents={item.amountCents}
                 />
               ))}
@@ -2079,7 +3179,11 @@ function CostSection(props: {
           ) : (
             <div className="grid gap-3">
               {props.overview.byProvider.map((item) => (
-                <SpendRow key={item.provider} label={item.provider} amountCents={item.amountCents} />
+                <SpendRow
+                  key={item.provider}
+                  label={item.provider}
+                  amountCents={item.amountCents}
+                />
               ))}
             </div>
           )}
@@ -2090,7 +3194,11 @@ function CostSection(props: {
           ) : (
             <div className="grid gap-3">
               {props.overview.byBiller.map((item) => (
-                <SpendRow key={item.biller} label={item.biller} amountCents={item.amountCents} />
+                <SpendRow
+                  key={item.biller}
+                  label={item.biller}
+                  amountCents={item.amountCents}
+                />
               ))}
             </div>
           )}
@@ -2101,17 +3209,30 @@ function CostSection(props: {
           ) : (
             <div className="grid gap-3">
               {props.quotaWindows.map((window) => (
-                <article key={window.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <article
+                  key={window.id}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <h3 className="font-medium text-white">
-                        {window.scope === "company" ? "Company budget window" : agentById.get(window.scopeRef ?? "") ?? window.scopeRef}
+                        {window.scope === "company"
+                          ? "Company budget window"
+                          : (agentById.get(window.scopeRef ?? "") ??
+                            window.scopeRef)}
                       </h3>
                       <p className="text-sm text-zinc-400">
-                        {formatDate(window.periodStart)} to {formatDate(window.periodEnd)}
+                        {formatDate(window.periodStart)} to{" "}
+                        {formatDate(window.periodEnd)}
                       </p>
                     </div>
-                    <Badge label={window.status} tone={STATUS_TONES[window.status] ?? "bg-white/10 text-zinc-200"} />
+                    <Badge
+                      label={window.status}
+                      tone={
+                        STATUS_TONES[window.status] ??
+                        "bg-white/10 text-zinc-200"
+                      }
+                    />
                   </div>
                   <div className="mt-3 grid gap-2 text-sm text-zinc-300">
                     <div>Limit {formatCurrency(window.limitCents)}</div>
@@ -2129,17 +3250,34 @@ function CostSection(props: {
           ) : (
             <div className="grid gap-3">
               {props.financeEvents.slice(0, 8).map((event) => (
-                <article key={event.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <article
+                  key={event.id}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="font-medium text-white">{event.provider}</h3>
+                      <h3 className="font-medium text-white">
+                        {event.provider}
+                      </h3>
                       <p className="text-sm text-zinc-400">
-                        {event.projectId ? projectById.get(event.projectId) ?? event.projectId : "Unassigned"} · {event.biller}
+                        {event.projectId
+                          ? (projectById.get(event.projectId) ??
+                            event.projectId)
+                          : "Unassigned"}{" "}
+                        · {event.biller}
                       </p>
                     </div>
                     <div className="text-right">
-                      <div className="font-medium text-white">{formatCurrency(event.direction === "credit" ? -event.amountCents : event.amountCents)}</div>
-                      <div className="text-xs text-zinc-500">{formatDateTime(event.createdAt)}</div>
+                      <div className="font-medium text-white">
+                        {formatCurrency(
+                          event.direction === "credit"
+                            ? -event.amountCents
+                            : event.amountCents,
+                        )}
+                      </div>
+                      <div className="text-xs text-zinc-500">
+                        {formatDateTime(event.createdAt)}
+                      </div>
                     </div>
                   </div>
                 </article>
@@ -2162,8 +3300,14 @@ function WorkspaceSection(props: {
   onCreateProjectWorkspace(values: Record<string, string>): Promise<void>;
   onCreateExecutionWorkspace(values: Record<string, string>): Promise<void>;
 }) {
-  const projectOptions = props.projects.map((project) => ({ label: `${project.name} · ${project.status}`, value: project.id }));
-  const issueOptions = props.issues.map((issue) => ({ label: issue.title, value: issue.id }));
+  const projectOptions = props.projects.map((project) => ({
+    label: `${project.name} · ${project.status}`,
+    value: project.id,
+  }));
+  const issueOptions = props.issues.map((issue) => ({
+    label: issue.title,
+    value: issue.id,
+  }));
 
   return (
     <section className="grid gap-6 2xl:grid-cols-[0.95fr_1.05fr]">
@@ -2171,14 +3315,43 @@ function WorkspaceSection(props: {
         <Panel title="Create project workspace">
           <InlineForm
             submitLabel="Add project workspace"
-            initialValues={props.selectedWorkspaceProjectId ? { projectId: props.selectedWorkspaceProjectId, isPrimary: "false" } : { isPrimary: "false" }}
+            initialValues={
+              props.selectedWorkspaceProjectId
+                ? {
+                    projectId: props.selectedWorkspaceProjectId,
+                    isPrimary: "false",
+                  }
+                : { isPrimary: "false" }
+            }
             fields={[
-              { name: "projectId", label: "Project", options: projectOptions, emptyLabel: "Select project" },
+              {
+                name: "projectId",
+                label: "Project",
+                options: projectOptions,
+                emptyLabel: "Select project",
+              },
               { name: "name", label: "Name", placeholder: "main-repo" },
-              { name: "cwd", label: "Working directory", placeholder: "~/.paperai/workspaces/projects/<project-id>/main-repo" },
-              { name: "repoUrl", label: "Repository URL", placeholder: "https://github.com/example/repo" },
+              {
+                name: "cwd",
+                label: "Working directory",
+                placeholder:
+                  "~/.paperai/workspaces/projects/<project-id>/main-repo",
+              },
+              {
+                name: "repoUrl",
+                label: "Repository URL",
+                placeholder: "https://github.com/example/repo",
+              },
               { name: "repoRef", label: "Repository ref", placeholder: "main" },
-              { name: "isPrimary", label: "Primary", options: [{ label: "true", value: "true" }, { label: "false", value: "false" }], emptyLabel: "false" },
+              {
+                name: "isPrimary",
+                label: "Primary",
+                options: [
+                  { label: "true", value: "true" },
+                  { label: "false", value: "false" },
+                ],
+                emptyLabel: "false",
+              },
             ]}
             onSubmit={props.onCreateProjectWorkspace}
           />
@@ -2188,13 +3361,36 @@ function WorkspaceSection(props: {
           <InlineForm
             submitLabel="Add execution workspace"
             fields={[
-              { name: "projectId", label: "Project", options: projectOptions, emptyLabel: "No project" },
-              { name: "issueId", label: "Issue", options: issueOptions, emptyLabel: "No issue" },
+              {
+                name: "projectId",
+                label: "Project",
+                options: projectOptions,
+                emptyLabel: "No project",
+              },
+              {
+                name: "issueId",
+                label: "Issue",
+                options: issueOptions,
+                emptyLabel: "No issue",
+              },
               { name: "name", label: "Name", placeholder: "issue-42-branch" },
-              { name: "cwd", label: "Working directory", placeholder: "~/.paperai/workspaces/executions/<project-id>/<issue-id>/issue-42-branch" },
-              { name: "repoUrl", label: "Repository URL", placeholder: "https://github.com/example/repo" },
+              {
+                name: "cwd",
+                label: "Working directory",
+                placeholder:
+                  "~/.paperai/workspaces/executions/<project-id>/<issue-id>/issue-42-branch",
+              },
+              {
+                name: "repoUrl",
+                label: "Repository URL",
+                placeholder: "https://github.com/example/repo",
+              },
               { name: "baseRef", label: "Base ref", placeholder: "main" },
-              { name: "branchName", label: "Branch name", placeholder: "codex/issue-42" },
+              {
+                name: "branchName",
+                label: "Branch name",
+                placeholder: "codex/issue-42",
+              },
               {
                 name: "mode",
                 label: "Mode",
@@ -2230,11 +3426,16 @@ function WorkspaceSection(props: {
               <div className="flex flex-wrap gap-2">
                 {props.projects.map((project) => (
                   <button
+                    type="button"
                     key={project.id}
                     className={`rounded-full px-3 py-1 text-xs uppercase tracking-[0.18em] ${
-                      project.id === props.selectedWorkspaceProjectId ? "bg-cyan-300 text-zinc-950" : "bg-white/10 text-zinc-200"
+                      project.id === props.selectedWorkspaceProjectId
+                        ? "bg-cyan-300 text-zinc-950"
+                        : "bg-white/10 text-zinc-200"
                     }`}
-                    onClick={() => props.setSelectedWorkspaceProjectId(project.id)}
+                    onClick={() =>
+                      props.setSelectedWorkspaceProjectId(project.id)
+                    }
                   >
                     {project.name}
                   </button>
@@ -2245,7 +3446,15 @@ function WorkspaceSection(props: {
               ) : (
                 <div className="grid gap-3">
                   {props.projectWorkspaces.map((workspace) => (
-                    <WorkspaceCard key={workspace.id} name={workspace.name} status={workspace.isPrimary ? "primary" : "secondary"} detail={workspace.cwd ?? workspace.repoUrl ?? "No repo details"} meta={[workspace.repoRef ?? "no-ref"]} />
+                    <WorkspaceCard
+                      key={workspace.id}
+                      name={workspace.name}
+                      status={workspace.isPrimary ? "primary" : "secondary"}
+                      detail={
+                        workspace.cwd ?? workspace.repoUrl ?? "No repo details"
+                      }
+                      meta={[workspace.repoRef ?? "no-ref"]}
+                    />
                   ))}
                 </div>
               )}
@@ -2263,8 +3472,14 @@ function WorkspaceSection(props: {
                   key={workspace.id}
                   name={workspace.name}
                   status={workspace.status}
-                  detail={workspace.cwd ?? workspace.repoUrl ?? "No repo details"}
-                  meta={[workspace.mode, workspace.branchName ?? "no-branch", workspace.baseRef ?? "no-base-ref"]}
+                  detail={
+                    workspace.cwd ?? workspace.repoUrl ?? "No repo details"
+                  }
+                  meta={[
+                    workspace.mode,
+                    workspace.branchName ?? "no-branch",
+                    workspace.baseRef ?? "no-base-ref",
+                  ]}
                 />
               ))}
             </div>
@@ -2282,9 +3497,25 @@ function IssueOpsSection(props: {
   issueDocuments: IssueDocumentSummary[];
   selectedDocument: IssueDocumentSummary | null;
   setSelectedDocumentId(value: string | null): void;
-  issueDocumentRevisions: Array<{ id: string; createdAt: string; body: string }>;
-  issueAttachments: Array<{ id: string; name: string; contentType: string; sizeBytes: number; url: string | null; createdAt: string }>;
-  issueWorkProducts: Array<{ id: string; kind: string; title: string; updatedAt: string }>;
+  issueDocumentRevisions: Array<{
+    id: string;
+    createdAt: string;
+    body: string;
+  }>;
+  issueAttachments: Array<{
+    id: string;
+    name: string;
+    contentType: string;
+    sizeBytes: number;
+    url: string | null;
+    createdAt: string;
+  }>;
+  issueWorkProducts: Array<{
+    id: string;
+    kind: string;
+    title: string;
+    updatedAt: string;
+  }>;
   onCreateDocument(values: Record<string, string>): Promise<void>;
   onUpdateDocument(values: Record<string, string>): Promise<void>;
   onCreateAttachment(values: Record<string, string>): Promise<void>;
@@ -2300,16 +3531,25 @@ function IssueOpsSection(props: {
             <div className="grid gap-3">
               {props.issues.map((issue) => (
                 <button
+                  type="button"
                   key={issue.id}
                   className={`rounded-2xl border px-4 py-4 text-left ${
-                    issue.id === props.selectedIssueId ? "border-cyan-300/60 bg-cyan-400/10" : "border-white/10 bg-black/20"
+                    issue.id === props.selectedIssueId
+                      ? "border-cyan-300/60 bg-cyan-400/10"
+                      : "border-white/10 bg-black/20"
                   }`}
                   onClick={() => props.setSelectedIssueId(issue.id)}
                 >
                   <div className="font-medium text-white">{issue.title}</div>
                   <div className="mt-1 flex flex-wrap gap-2">
-                    <Badge label={issue.status} tone={STATUS_TONES[issue.status]} />
-                    <Badge label={issue.priority} tone="bg-rose-300/15 text-rose-100" />
+                    <Badge
+                      label={issue.status}
+                      tone={STATUS_TONES[issue.status]}
+                    />
+                    <Badge
+                      label={issue.priority}
+                      tone="bg-rose-300/15 text-rose-100"
+                    />
                   </div>
                 </button>
               ))}
@@ -2320,12 +3560,36 @@ function IssueOpsSection(props: {
         <Panel title="Create issue document">
           <InlineForm
             submitLabel="Add document"
-            initialValues={props.selectedIssueId ? { issueId: props.selectedIssueId, format: "markdown" } : { format: "markdown" }}
+            initialValues={
+              props.selectedIssueId
+                ? { issueId: props.selectedIssueId, format: "markdown" }
+                : { format: "markdown" }
+            }
             fields={[
-              { name: "issueId", label: "Issue", options: props.issues.map((issue) => ({ label: issue.title, value: issue.id })), emptyLabel: "Select issue" },
+              {
+                name: "issueId",
+                label: "Issue",
+                options: props.issues.map((issue) => ({
+                  label: issue.title,
+                  value: issue.id,
+                })),
+                emptyLabel: "Select issue",
+              },
               { name: "key", label: "Key", placeholder: "implementation-plan" },
-              { name: "title", label: "Title", placeholder: "Implementation plan" },
-              { name: "format", label: "Format", options: [{ label: "markdown", value: "markdown" }, { label: "text", value: "text" }], emptyLabel: "markdown" },
+              {
+                name: "title",
+                label: "Title",
+                placeholder: "Implementation plan",
+              },
+              {
+                name: "format",
+                label: "Format",
+                options: [
+                  { label: "markdown", value: "markdown" },
+                  { label: "text", value: "text" },
+                ],
+                emptyLabel: "markdown",
+              },
               { name: "body", label: "Body", type: "textarea", rows: 8 },
             ]}
             onSubmit={props.onCreateDocument}
@@ -2335,14 +3599,36 @@ function IssueOpsSection(props: {
         <Panel title="Create attachment">
           <InlineForm
             submitLabel="Add attachment"
-            initialValues={props.selectedIssueId ? { issueId: props.selectedIssueId } : undefined}
+            initialValues={
+              props.selectedIssueId
+                ? { issueId: props.selectedIssueId }
+                : undefined
+            }
             fields={[
-              { name: "issueId", label: "Issue", options: props.issues.map((issue) => ({ label: issue.title, value: issue.id })), emptyLabel: "Select issue" },
+              {
+                name: "issueId",
+                label: "Issue",
+                options: props.issues.map((issue) => ({
+                  label: issue.title,
+                  value: issue.id,
+                })),
+                emptyLabel: "Select issue",
+              },
               { name: "name", label: "Name", placeholder: "diagram.png" },
-              { name: "contentType", label: "Content type", placeholder: "image/png" },
+              {
+                name: "contentType",
+                label: "Content type",
+                placeholder: "image/png",
+              },
               { name: "sizeBytes", label: "Size (bytes)", type: "number" },
               { name: "url", label: "URL", placeholder: "https://..." },
-              { name: "metadata", label: "Metadata JSON", type: "textarea", rows: 3, placeholder: "{\"source\":\"figma\"}" },
+              {
+                name: "metadata",
+                label: "Metadata JSON",
+                type: "textarea",
+                rows: 3,
+                placeholder: '{"source":"figma"}',
+              },
             ]}
             onSubmit={props.onCreateAttachment}
           />
@@ -2351,12 +3637,34 @@ function IssueOpsSection(props: {
         <Panel title="Create work product">
           <InlineForm
             submitLabel="Add work product"
-            initialValues={props.selectedIssueId ? { issueId: props.selectedIssueId } : undefined}
+            initialValues={
+              props.selectedIssueId
+                ? { issueId: props.selectedIssueId }
+                : undefined
+            }
             fields={[
-              { name: "issueId", label: "Issue", options: props.issues.map((issue) => ({ label: issue.title, value: issue.id })), emptyLabel: "Select issue" },
+              {
+                name: "issueId",
+                label: "Issue",
+                options: props.issues.map((issue) => ({
+                  label: issue.title,
+                  value: issue.id,
+                })),
+                emptyLabel: "Select issue",
+              },
               { name: "kind", label: "Kind", placeholder: "release_note" },
-              { name: "title", label: "Title", placeholder: "Release note draft" },
-              { name: "content", label: "Content JSON", type: "textarea", rows: 4, placeholder: "{\"body\":\"...\"}" },
+              {
+                name: "title",
+                label: "Title",
+                placeholder: "Release note draft",
+              },
+              {
+                name: "content",
+                label: "Content JSON",
+                type: "textarea",
+                rows: 4,
+                placeholder: '{"body":"..."}',
+              },
             ]}
             onSubmit={props.onCreateWorkProduct}
           />
@@ -2372,9 +3680,12 @@ function IssueOpsSection(props: {
               <div className="flex flex-wrap gap-2">
                 {props.issueDocuments.map((document) => (
                   <button
+                    type="button"
                     key={document.id}
                     className={`rounded-full px-3 py-1 text-xs uppercase tracking-[0.18em] ${
-                      document.id === props.selectedDocument?.id ? "bg-cyan-300 text-zinc-950" : "bg-white/10 text-zinc-200"
+                      document.id === props.selectedDocument?.id
+                        ? "bg-cyan-300 text-zinc-950"
+                        : "bg-white/10 text-zinc-200"
                     }`}
                     onClick={() => props.setSelectedDocumentId(document.id)}
                   >
@@ -2387,13 +3698,23 @@ function IssueOpsSection(props: {
                   <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <div className="font-medium text-white">{props.selectedDocument.title}</div>
+                        <div className="font-medium text-white">
+                          {props.selectedDocument.title}
+                        </div>
                         <div className="mt-1 flex gap-2">
-                          <Badge label={props.selectedDocument.format} tone="bg-white/10 text-zinc-200" />
-                          <Badge label={props.selectedDocument.key} tone="bg-cyan-300/15 text-cyan-100" />
+                          <Badge
+                            label={props.selectedDocument.format}
+                            tone="bg-white/10 text-zinc-200"
+                          />
+                          <Badge
+                            label={props.selectedDocument.key}
+                            tone="bg-cyan-300/15 text-cyan-100"
+                          />
                         </div>
                       </div>
-                      <div className="text-xs text-zinc-500">{formatDateTime(props.selectedDocument.updatedAt)}</div>
+                      <div className="text-xs text-zinc-500">
+                        {formatDateTime(props.selectedDocument.updatedAt)}
+                      </div>
                     </div>
                   </div>
                   <InlineForm
@@ -2404,10 +3725,27 @@ function IssueOpsSection(props: {
                       format: props.selectedDocument.format,
                     }}
                     fields={[
-                      { name: "documentId", label: "Document id", placeholder: props.selectedDocument.id },
+                      {
+                        name: "documentId",
+                        label: "Document id",
+                        placeholder: props.selectedDocument.id,
+                      },
                       { name: "title", label: "Title" },
-                      { name: "format", label: "Format", options: [{ label: "markdown", value: "markdown" }, { label: "text", value: "text" }], emptyLabel: props.selectedDocument.format },
-                      { name: "body", label: "Body", type: "textarea", rows: 7 },
+                      {
+                        name: "format",
+                        label: "Format",
+                        options: [
+                          { label: "markdown", value: "markdown" },
+                          { label: "text", value: "text" },
+                        ],
+                        emptyLabel: props.selectedDocument.format,
+                      },
+                      {
+                        name: "body",
+                        label: "Body",
+                        type: "textarea",
+                        rows: 7,
+                      },
                     ]}
                     onSubmit={props.onUpdateDocument}
                   />
@@ -2416,12 +3754,21 @@ function IssueOpsSection(props: {
                   ) : (
                     <div className="grid gap-3">
                       {props.issueDocumentRevisions.map((revision) => (
-                        <article key={revision.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                        <article
+                          key={revision.id}
+                          className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                        >
                           <div className="flex items-center justify-between gap-3">
-                            <div className="font-medium text-white">{revision.id.slice(0, 8)}</div>
-                            <div className="text-xs text-zinc-500">{formatDateTime(revision.createdAt)}</div>
+                            <div className="font-medium text-white">
+                              {revision.id.slice(0, 8)}
+                            </div>
+                            <div className="text-xs text-zinc-500">
+                              {formatDateTime(revision.createdAt)}
+                            </div>
                           </div>
-                          <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-sm text-zinc-300">{revision.body}</pre>
+                          <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-sm text-zinc-300">
+                            {revision.body}
+                          </pre>
                         </article>
                       ))}
                     </div>
@@ -2438,19 +3785,37 @@ function IssueOpsSection(props: {
           ) : (
             <div className="grid gap-3">
               {props.issueAttachments.map((attachment) => (
-                <article key={attachment.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <article
+                  key={attachment.id}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <div className="font-medium text-white">{attachment.name}</div>
+                      <div className="font-medium text-white">
+                        {attachment.name}
+                      </div>
                       <div className="mt-1 flex gap-2">
-                        <Badge label={attachment.contentType} tone="bg-white/10 text-zinc-200" />
-                        <Badge label={`${attachment.sizeBytes} bytes`} tone="bg-amber-300/15 text-amber-100" />
+                        <Badge
+                          label={attachment.contentType}
+                          tone="bg-white/10 text-zinc-200"
+                        />
+                        <Badge
+                          label={`${attachment.sizeBytes} bytes`}
+                          tone="bg-amber-300/15 text-amber-100"
+                        />
                       </div>
                     </div>
-                    <div className="text-xs text-zinc-500">{formatDateTime(attachment.createdAt)}</div>
+                    <div className="text-xs text-zinc-500">
+                      {formatDateTime(attachment.createdAt)}
+                    </div>
                   </div>
                   {attachment.url ? (
-                    <a className="mt-3 inline-block text-sm text-cyan-300 hover:text-cyan-200" href={attachment.url} target="_blank" rel="noreferrer">
+                    <a
+                      className="mt-3 inline-block text-sm text-cyan-300 hover:text-cyan-200"
+                      href={attachment.url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       Open attachment
                     </a>
                   ) : null}
@@ -2466,15 +3831,23 @@ function IssueOpsSection(props: {
           ) : (
             <div className="grid gap-3">
               {props.issueWorkProducts.map((item) => (
-                <article key={item.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <article
+                  key={item.id}
+                  className="rounded-2xl border border-white/10 bg-black/20 p-4"
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="font-medium text-white">{item.title}</div>
                       <div className="mt-1">
-                        <Badge label={item.kind} tone="bg-violet-300/15 text-violet-100" />
+                        <Badge
+                          label={item.kind}
+                          tone="bg-violet-300/15 text-violet-100"
+                        />
                       </div>
                     </div>
-                    <div className="text-xs text-zinc-500">{formatDateTime(item.updatedAt)}</div>
+                    <div className="text-xs text-zinc-500">
+                      {formatDateTime(item.updatedAt)}
+                    </div>
                   </div>
                 </article>
               ))}
@@ -2501,10 +3874,33 @@ function SkillSection(props: {
             fields={[
               { name: "slug", label: "Slug", placeholder: "release-operator" },
               { name: "name", label: "Name", placeholder: "Release Operator" },
-              { name: "description", label: "Description", type: "textarea", rows: 3 },
-              { name: "sourceType", label: "Source type", options: [{ label: "local_path", value: "local_path" }, { label: "github", value: "github" }, { label: "url", value: "url" }], emptyLabel: "local_path" },
-              { name: "sourceLocator", label: "Source locator", placeholder: "/Users/.../skills/release" },
-              { name: "markdown", label: "Markdown", type: "textarea", rows: 8 },
+              {
+                name: "description",
+                label: "Description",
+                type: "textarea",
+                rows: 3,
+              },
+              {
+                name: "sourceType",
+                label: "Source type",
+                options: [
+                  { label: "local_path", value: "local_path" },
+                  { label: "github", value: "github" },
+                  { label: "url", value: "url" },
+                ],
+                emptyLabel: "local_path",
+              },
+              {
+                name: "sourceLocator",
+                label: "Source locator",
+                placeholder: "/Users/.../skills/release",
+              },
+              {
+                name: "markdown",
+                label: "Markdown",
+                type: "textarea",
+                rows: 8,
+              },
             ]}
             onSubmit={props.onCreateSkill}
           />
@@ -2515,8 +3911,20 @@ function SkillSection(props: {
             submitLabel="Scan skill directory"
             initialValues={{ upsert: "true" }}
             fields={[
-              { name: "root", label: "Root path", placeholder: "/Users/.../.codex/skills" },
-              { name: "upsert", label: "Upsert existing", options: [{ label: "true", value: "true" }, { label: "false", value: "false" }], emptyLabel: "true" },
+              {
+                name: "root",
+                label: "Root path",
+                placeholder: "/Users/.../.codex/skills",
+              },
+              {
+                name: "upsert",
+                label: "Upsert existing",
+                options: [
+                  { label: "true", value: "true" },
+                  { label: "false", value: "false" },
+                ],
+                emptyLabel: "true",
+              },
             ]}
             onSubmit={props.onScanSkills}
           />
@@ -2529,18 +3937,37 @@ function SkillSection(props: {
         ) : (
           <div className="grid gap-3">
             {props.skills.map((skill) => (
-              <article key={skill.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+              <article
+                key={skill.id}
+                className="rounded-2xl border border-white/10 bg-black/20 p-4"
+              >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <div className="font-medium text-white">{skill.name}</div>
                     <div className="mt-1 flex flex-wrap gap-2">
-                      <Badge label={skill.slug} tone="bg-cyan-300/15 text-cyan-100" />
-                      <Badge label={skill.sourceType} tone="bg-white/10 text-zinc-200" />
+                      <Badge
+                        label={skill.slug}
+                        tone="bg-cyan-300/15 text-cyan-100"
+                      />
+                      <Badge
+                        label={skill.sourceType}
+                        tone="bg-white/10 text-zinc-200"
+                      />
                     </div>
-                    {skill.description ? <p className="mt-3 text-sm text-zinc-400">{skill.description}</p> : null}
-                    {skill.sourceLocator ? <p className="mt-2 text-xs text-zinc-500">{skill.sourceLocator}</p> : null}
+                    {skill.description ? (
+                      <p className="mt-3 text-sm text-zinc-400">
+                        {skill.description}
+                      </p>
+                    ) : null}
+                    {skill.sourceLocator ? (
+                      <p className="mt-2 text-xs text-zinc-500">
+                        {skill.sourceLocator}
+                      </p>
+                    ) : null}
                   </div>
-                  <div className="text-xs text-zinc-500">{formatDateTime(skill.updatedAt)}</div>
+                  <div className="text-xs text-zinc-500">
+                    {formatDateTime(skill.updatedAt)}
+                  </div>
                 </div>
               </article>
             ))}
@@ -2555,15 +3982,25 @@ function PluginSection(props: {
   plugins: Plugin[];
   selectedPluginId: string | null;
   setSelectedPluginId(value: string | null): void;
-  pluginHealth: { status: string; message: string; checkedAt: string; capabilities: string[] } | null;
+  pluginHealth: {
+    status: string;
+    message: string;
+    checkedAt: string;
+    capabilities: string[];
+  } | null;
   actionResult: PluginRuntimeActionResult | null;
   onCreatePlugin(values: Record<string, string>): Promise<void>;
-  onSetPluginStatus(pluginId: string, status: "active" | "disabled"): Promise<void>;
+  onSetPluginStatus(
+    pluginId: string,
+    status: "active" | "disabled",
+  ): Promise<void>;
   onInvokeTool(values: Record<string, string>): Promise<void>;
   onTriggerJob(values: Record<string, string>): Promise<void>;
   onTriggerWebhook(values: Record<string, string>): Promise<void>;
 }) {
-  const selectedPlugin = props.plugins.find((plugin) => plugin.id === props.selectedPluginId) ?? null;
+  const selectedPlugin =
+    props.plugins.find((plugin) => plugin.id === props.selectedPluginId) ??
+    null;
 
   return (
     <section className="grid gap-6 2xl:grid-cols-[0.85fr_1.15fr]">
@@ -2574,7 +4011,13 @@ function PluginSection(props: {
             fields={[
               { name: "slug", label: "Slug", placeholder: "release-bot" },
               { name: "name", label: "Name", placeholder: "Release Bot" },
-              { name: "config", label: "Config JSON", type: "textarea", rows: 4, placeholder: "{\"baseUrl\":\"...\"}" },
+              {
+                name: "config",
+                label: "Config JSON",
+                type: "textarea",
+                rows: 4,
+                placeholder: '{"baseUrl":"..."}',
+              },
               {
                 name: "manifest",
                 label: "Manifest JSON",
@@ -2605,9 +4048,24 @@ function PluginSection(props: {
                 submitLabel="Invoke tool"
                 initialValues={{ pluginId: selectedPlugin.id }}
                 fields={[
-                  { name: "pluginId", label: "Plugin id", placeholder: selectedPlugin.id },
-                  { name: "toolName", label: "Tool name", placeholder: selectedPlugin.manifest.tools?.[0]?.name ?? "tool-name" },
-                  { name: "input", label: "Input JSON", type: "textarea", rows: 4, placeholder: "{\"issueId\":\"...\"}" },
+                  {
+                    name: "pluginId",
+                    label: "Plugin id",
+                    placeholder: selectedPlugin.id,
+                  },
+                  {
+                    name: "toolName",
+                    label: "Tool name",
+                    placeholder:
+                      selectedPlugin.manifest.tools?.[0]?.name ?? "tool-name",
+                  },
+                  {
+                    name: "input",
+                    label: "Input JSON",
+                    type: "textarea",
+                    rows: 4,
+                    placeholder: '{"issueId":"..."}',
+                  },
                 ]}
                 onSubmit={props.onInvokeTool}
               />
@@ -2615,9 +4073,24 @@ function PluginSection(props: {
                 submitLabel="Trigger job"
                 initialValues={{ pluginId: selectedPlugin.id }}
                 fields={[
-                  { name: "pluginId", label: "Plugin id", placeholder: selectedPlugin.id },
-                  { name: "jobKey", label: "Job key", placeholder: selectedPlugin.manifest.jobs?.[0]?.key ?? "job-key" },
-                  { name: "input", label: "Input JSON", type: "textarea", rows: 4, placeholder: "{\"projectId\":\"...\"}" },
+                  {
+                    name: "pluginId",
+                    label: "Plugin id",
+                    placeholder: selectedPlugin.id,
+                  },
+                  {
+                    name: "jobKey",
+                    label: "Job key",
+                    placeholder:
+                      selectedPlugin.manifest.jobs?.[0]?.key ?? "job-key",
+                  },
+                  {
+                    name: "input",
+                    label: "Input JSON",
+                    type: "textarea",
+                    rows: 4,
+                    placeholder: '{"projectId":"..."}',
+                  },
                 ]}
                 onSubmit={props.onTriggerJob}
               />
@@ -2625,9 +4098,25 @@ function PluginSection(props: {
                 submitLabel="Trigger webhook"
                 initialValues={{ pluginId: selectedPlugin.id }}
                 fields={[
-                  { name: "pluginId", label: "Plugin id", placeholder: selectedPlugin.id },
-                  { name: "webhookKey", label: "Webhook key", placeholder: selectedPlugin.manifest.webhooks?.[0]?.key ?? "webhook-key" },
-                  { name: "payload", label: "Payload JSON", type: "textarea", rows: 4, placeholder: "{\"event\":\"deploy.complete\"}" },
+                  {
+                    name: "pluginId",
+                    label: "Plugin id",
+                    placeholder: selectedPlugin.id,
+                  },
+                  {
+                    name: "webhookKey",
+                    label: "Webhook key",
+                    placeholder:
+                      selectedPlugin.manifest.webhooks?.[0]?.key ??
+                      "webhook-key",
+                  },
+                  {
+                    name: "payload",
+                    label: "Payload JSON",
+                    type: "textarea",
+                    rows: 4,
+                    placeholder: '{"event":"deploy.complete"}',
+                  },
                 ]}
                 onSubmit={props.onTriggerWebhook}
               />
@@ -2637,7 +4126,14 @@ function PluginSection(props: {
                     <div className="font-medium text-white">
                       {props.actionResult.kind} · {props.actionResult.key}
                     </div>
-                    <Badge label={props.actionResult.ok ? "ok" : "failed"} tone={props.actionResult.ok ? "bg-emerald-300/20 text-emerald-200" : "bg-rose-300/20 text-rose-200"} />
+                    <Badge
+                      label={props.actionResult.ok ? "ok" : "failed"}
+                      tone={
+                        props.actionResult.ok
+                          ? "bg-emerald-300/20 text-emerald-200"
+                          : "bg-rose-300/20 text-rose-200"
+                      }
+                    />
                   </div>
                   <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-sm text-zinc-300">
                     {JSON.stringify(props.actionResult.result, null, 2)}
@@ -2659,24 +4155,53 @@ function PluginSection(props: {
                 <article
                   key={plugin.id}
                   className={`rounded-2xl border p-4 ${
-                    plugin.id === props.selectedPluginId ? "border-cyan-300/60 bg-cyan-400/10" : "border-white/10 bg-black/20"
+                    plugin.id === props.selectedPluginId
+                      ? "border-cyan-300/60 bg-cyan-400/10"
+                      : "border-white/10 bg-black/20"
                   }`}
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <button className="text-left" onClick={() => props.setSelectedPluginId(plugin.id)}>
-                      <div className="font-medium text-white">{plugin.name}</div>
+                    <button
+                      type="button"
+                      className="text-left"
+                      onClick={() => props.setSelectedPluginId(plugin.id)}
+                    >
+                      <div className="font-medium text-white">
+                        {plugin.name}
+                      </div>
                       <div className="mt-1 flex flex-wrap gap-2">
-                        <Badge label={plugin.slug} tone="bg-cyan-300/15 text-cyan-100" />
-                        <Badge label={plugin.status} tone={STATUS_TONES[plugin.status] ?? "bg-white/10 text-zinc-200"} />
+                        <Badge
+                          label={plugin.slug}
+                          tone="bg-cyan-300/15 text-cyan-100"
+                        />
+                        <Badge
+                          label={plugin.status}
+                          tone={
+                            STATUS_TONES[plugin.status] ??
+                            "bg-white/10 text-zinc-200"
+                          }
+                        />
                       </div>
                     </button>
                     <div className="flex gap-2">
                       {plugin.status === "disabled" ? (
-                        <button className="rounded-full bg-emerald-300 px-3 py-1 text-xs text-zinc-950" onClick={() => void props.onSetPluginStatus(plugin.id, "active")}>
+                        <button
+                          type="button"
+                          className="rounded-full bg-emerald-300 px-3 py-1 text-xs text-zinc-950"
+                          onClick={() =>
+                            void props.onSetPluginStatus(plugin.id, "active")
+                          }
+                        >
                           Enable
                         </button>
                       ) : (
-                        <button className="rounded-full bg-zinc-300 px-3 py-1 text-xs text-zinc-950" onClick={() => void props.onSetPluginStatus(plugin.id, "disabled")}>
+                        <button
+                          type="button"
+                          className="rounded-full bg-zinc-300 px-3 py-1 text-xs text-zinc-950"
+                          onClick={() =>
+                            void props.onSetPluginStatus(plugin.id, "disabled")
+                          }
+                        >
                           Disable
                         </button>
                       )}
@@ -2684,7 +4209,11 @@ function PluginSection(props: {
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {plugin.manifest.capabilities.map((capability) => (
-                      <Badge key={capability} label={capability} tone="bg-white/10 text-zinc-200" />
+                      <Badge
+                        key={capability}
+                        label={capability}
+                        tone="bg-white/10 text-zinc-200"
+                      />
                     ))}
                   </div>
                 </article>
@@ -2700,17 +4229,35 @@ function PluginSection(props: {
             <div className="grid gap-4">
               <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="font-medium text-white">{selectedPlugin.name}</div>
-                  <Badge label={props.pluginHealth.status} tone={STATUS_TONES[props.pluginHealth.status] ?? "bg-white/10 text-zinc-200"} />
+                  <div className="font-medium text-white">
+                    {selectedPlugin.name}
+                  </div>
+                  <Badge
+                    label={props.pluginHealth.status}
+                    tone={
+                      STATUS_TONES[props.pluginHealth.status] ??
+                      "bg-white/10 text-zinc-200"
+                    }
+                  />
                 </div>
-                <p className="mt-3 text-sm text-zinc-300">{props.pluginHealth.message}</p>
-                <div className="mt-3 text-xs text-zinc-500">Checked {formatDateTime(props.pluginHealth.checkedAt)}</div>
+                <p className="mt-3 text-sm text-zinc-300">
+                  {props.pluginHealth.message}
+                </p>
+                <div className="mt-3 text-xs text-zinc-500">
+                  Checked {formatDateTime(props.pluginHealth.checkedAt)}
+                </div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                <div className="text-sm font-medium text-white">Capabilities</div>
+                <div className="text-sm font-medium text-white">
+                  Capabilities
+                </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {props.pluginHealth.capabilities.map((capability) => (
-                    <Badge key={capability} label={capability} tone="bg-cyan-300/15 text-cyan-100" />
+                    <Badge
+                      key={capability}
+                      label={capability}
+                      tone="bg-cyan-300/15 text-cyan-100"
+                    />
                   ))}
                 </div>
               </div>
@@ -2725,7 +4272,13 @@ function PluginSection(props: {
 }
 
 function SecretSection(props: {
-  secrets: Array<{ id: string; name: string; provider: string; valueHint: string | null; updatedAt: string }>;
+  secrets: Array<{
+    id: string;
+    name: string;
+    provider: string;
+    valueHint: string | null;
+    updatedAt: string;
+  }>;
   onCreateSecret(values: Record<string, string>): Promise<void>;
 }) {
   return (
@@ -2736,7 +4289,11 @@ function SecretSection(props: {
           fields={[
             { name: "name", label: "Name", placeholder: "OPENAI_API_KEY" },
             { name: "value", label: "Value", type: "textarea", rows: 4 },
-            { name: "valueHint", label: "Value hint", placeholder: "sk-...9d2" },
+            {
+              name: "valueHint",
+              label: "Value hint",
+              placeholder: "sk-...9d2",
+            },
           ]}
           onSubmit={props.onCreateSecret}
         />
@@ -2747,16 +4304,29 @@ function SecretSection(props: {
         ) : (
           <div className="grid gap-3">
             {props.secrets.map((secret) => (
-              <article key={secret.id} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+              <article
+                key={secret.id}
+                className="rounded-2xl border border-white/10 bg-black/20 p-4"
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="font-medium text-white">{secret.name}</div>
                     <div className="mt-1 flex gap-2">
-                      <Badge label={secret.provider} tone="bg-white/10 text-zinc-200" />
-                      {secret.valueHint ? <Badge label={secret.valueHint} tone="bg-cyan-300/15 text-cyan-100" /> : null}
+                      <Badge
+                        label={secret.provider}
+                        tone="bg-white/10 text-zinc-200"
+                      />
+                      {secret.valueHint ? (
+                        <Badge
+                          label={secret.valueHint}
+                          tone="bg-cyan-300/15 text-cyan-100"
+                        />
+                      ) : null}
                     </div>
                   </div>
-                  <div className="text-xs text-zinc-500">{formatDateTime(secret.updatedAt)}</div>
+                  <div className="text-xs text-zinc-500">
+                    {formatDateTime(secret.updatedAt)}
+                  </div>
                 </div>
               </article>
             ))}
@@ -2767,7 +4337,11 @@ function SecretSection(props: {
   );
 }
 
-function CompanyHero(props: { company: Company; members: number; pendingInvites: number }) {
+function CompanyHero(props: {
+  company: Company;
+  members: number;
+  pendingInvites: number;
+}) {
   return (
     <section className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-2xl shadow-black/20 backdrop-blur">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -2778,17 +4352,34 @@ function CompanyHero(props: { company: Company; members: number; pendingInvites:
           />
           <div className="space-y-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-cyan-300">{props.company.slug}</p>
-              <h2 className="text-3xl font-semibold text-white">{props.company.name}</h2>
+              <p className="text-xs uppercase tracking-[0.3em] text-cyan-300">
+                {props.company.slug}
+              </p>
+              <h2 className="text-3xl font-semibold text-white">
+                {props.company.name}
+              </h2>
             </div>
             <p className="max-w-2xl text-zinc-400">
-              {props.company.description ?? "Set the operating model, team access, execution priorities, and workspace topology for this company."}
+              {props.company.description ??
+                "Set the operating model, team access, execution priorities, and workspace topology for this company."}
             </p>
             <div className="flex flex-wrap gap-2">
-              <Badge label={props.company.status} tone={STATUS_TONES[props.company.status]} />
-              <Badge label={`${props.members} members`} tone="bg-white/10 text-zinc-200" />
-              <Badge label={`${props.pendingInvites} open invites`} tone="bg-cyan-300/15 text-cyan-100" />
-              <Badge label={`Budget ${formatCurrency(props.company.monthlyBudgetCents)}`} tone="bg-amber-300/15 text-amber-100" />
+              <Badge
+                label={props.company.status}
+                tone={STATUS_TONES[props.company.status]}
+              />
+              <Badge
+                label={`${props.members} members`}
+                tone="bg-white/10 text-zinc-200"
+              />
+              <Badge
+                label={`${props.pendingInvites} open invites`}
+                tone="bg-cyan-300/15 text-cyan-100"
+              />
+              <Badge
+                label={`Budget ${formatCurrency(props.company.monthlyBudgetCents)}`}
+                tone="bg-amber-300/15 text-amber-100"
+              />
             </div>
           </div>
         </div>
@@ -2805,21 +4396,37 @@ function OrgNodeCard(props: { node: OrgTreeNode; depth?: number }) {
   const depth = props.depth ?? 0;
   return (
     <div className="grid gap-3">
-      <article className="rounded-2xl border border-white/10 bg-black/20 p-4" style={{ marginLeft: depth * 18 }}>
+      <article
+        className="rounded-2xl border border-white/10 bg-black/20 p-4"
+        style={{ marginLeft: depth * 18 }}
+      >
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="font-medium text-white">{props.node.name}</div>
-            <div className="text-sm text-zinc-400">{props.node.title ?? "No title"}</div>
+            <div className="text-sm text-zinc-400">
+              {props.node.title ?? "No title"}
+            </div>
             <div className="mt-2 flex flex-wrap gap-2">
               {props.node.department ? (
-                <Badge label={`Dept: ${props.node.department.name}`} tone="bg-cyan-300/15 text-cyan-100" />
+                <Badge
+                  label={`Dept: ${props.node.department.name}`}
+                  tone="bg-cyan-300/15 text-cyan-100"
+                />
               ) : null}
               {props.node.position ? (
-                <Badge label={`Position: ${props.node.position.name}`} tone="bg-violet-300/15 text-violet-100" />
+                <Badge
+                  label={`Position: ${props.node.position.name}`}
+                  tone="bg-violet-300/15 text-violet-100"
+                />
               ) : null}
             </div>
           </div>
-          <Badge label={props.node.status} tone={STATUS_TONES[props.node.status] ?? "bg-white/10 text-zinc-200"} />
+          <Badge
+            label={props.node.status}
+            tone={
+              STATUS_TONES[props.node.status] ?? "bg-white/10 text-zinc-200"
+            }
+          />
         </div>
       </article>
       {props.node.children.length > 0 ? (
@@ -2833,7 +4440,12 @@ function OrgNodeCard(props: { node: OrgTreeNode; depth?: number }) {
   );
 }
 
-function WorkspaceCard(props: { name: string; status: string; detail: string; meta: string[] }) {
+function WorkspaceCard(props: {
+  name: string;
+  status: string;
+  detail: string;
+  meta: string[];
+}) {
   return (
     <article className="rounded-2xl border border-white/10 bg-black/20 p-4">
       <div className="flex items-start justify-between gap-3">
@@ -2841,7 +4453,10 @@ function WorkspaceCard(props: { name: string; status: string; detail: string; me
           <div className="font-medium text-white">{props.name}</div>
           <div className="mt-1 text-sm text-zinc-400">{props.detail}</div>
         </div>
-        <Badge label={props.status} tone={STATUS_TONES[props.status] ?? "bg-white/10 text-zinc-200"} />
+        <Badge
+          label={props.status}
+          tone={STATUS_TONES[props.status] ?? "bg-white/10 text-zinc-200"}
+        />
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
         {props.meta.map((item) => (
@@ -2856,12 +4471,18 @@ function SpendRow(props: { label: string; amountCents: number }) {
   return (
     <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
       <span className="text-sm text-zinc-300">{props.label}</span>
-      <span className="font-medium text-white">{formatCurrency(props.amountCents)}</span>
+      <span className="font-medium text-white">
+        {formatCurrency(props.amountCents)}
+      </span>
     </div>
   );
 }
 
-function InfoCard(props: { title: string; value: string | number; detail: string }) {
+function InfoCard(props: {
+  title: string;
+  value: string | number;
+  detail: string;
+}) {
   return (
     <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
       <div className="text-2xl font-semibold text-white">{props.value}</div>
@@ -2871,19 +4492,107 @@ function InfoCard(props: { title: string; value: string | number; detail: string
   );
 }
 
-function MetricTile(props: { title: string; value: string | number; detail: string }) {
+function MetricTile(props: {
+  title: string;
+  value: string | number;
+  detail: string;
+}) {
   return (
     <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
       <div className="text-2xl font-semibold text-white">{props.value}</div>
       <div className="mt-1 text-sm text-zinc-400">{props.title}</div>
       <p className="mt-2 text-xs text-zinc-500">{props.detail}</p>
     </div>
+  );
+}
+
+function ShellStatCard(props: {
+  label: string;
+  value: string | number;
+  detail: string;
+}) {
+  return (
+    <div className="rounded-[1.35rem] border border-white/10 bg-black/20 px-4 py-4">
+      <div className="text-xs uppercase tracking-[0.22em] text-zinc-500">
+        {props.label}
+      </div>
+      <div className="mt-3 text-2xl font-semibold text-white">
+        {props.value}
+      </div>
+      <p className="mt-2 text-xs text-zinc-400">{props.detail}</p>
+    </div>
+  );
+}
+
+function ShellNavButton(props: {
+  active: boolean;
+  glyph: string;
+  label: string;
+  blurb: string;
+  onClick(): void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`flex items-start gap-3 rounded-[1.35rem] border px-4 py-3 text-left transition ${
+        props.active
+          ? "border-cyan-300/60 bg-cyan-400/10 text-white"
+          : "border-white/10 bg-black/20 text-zinc-300 hover:border-white/20"
+      }`}
+      onClick={props.onClick}
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[0.95rem] border border-white/10 bg-white/5 text-sm font-semibold text-cyan-100">
+        {props.glyph}
+      </span>
+      <span>
+        <span className="font-medium text-white">{props.label}</span>
+        <span className="mt-1 block text-xs text-zinc-500">{props.blurb}</span>
+      </span>
+    </button>
+  );
+}
+
+function CommandActionRow(props: {
+  action: CommandAction;
+  active: boolean;
+  onClick(): void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`rounded-[1.35rem] border px-4 py-4 text-left transition ${
+        props.active
+          ? "border-cyan-300/60 bg-cyan-400/10"
+          : "border-white/10 bg-white/5 hover:border-cyan-300/40"
+      }`}
+      onClick={props.onClick}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.22em] text-zinc-500">
+            {props.action.group}
+          </div>
+          <div className="mt-2 font-medium text-white">
+            {props.action.label}
+          </div>
+          <div className="mt-1 text-sm text-zinc-400">{props.action.blurb}</div>
+        </div>
+        <div className="flex flex-col items-end gap-2 text-xs text-zinc-500">
+          {props.action.hint ? <span>{props.action.hint}</span> : null}
+          {props.action.active ? (
+            <Badge label="Current" tone="bg-cyan-300/15 text-cyan-100" />
+          ) : null}
+        </div>
+      </div>
+    </button>
   );
 }
 
 function Badge(props: { label: string; tone?: string }) {
   return (
-    <span className={`rounded-full px-3 py-1 text-xs uppercase tracking-[0.18em] ${props.tone ?? "bg-white/10 text-zinc-200"}`}>
+    <span
+      className={`rounded-full px-3 py-1 text-xs uppercase tracking-[0.18em] ${props.tone ?? "bg-white/10 text-zinc-200"}`}
+    >
       {props.label}
     </span>
   );

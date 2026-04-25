@@ -50,6 +50,11 @@ interface TuiModules {
   p: PromptApi;
 }
 
+interface SummaryItem {
+  label: string;
+  value: string;
+}
+
 function getCliCommand(context: CommandContext): string {
   return context.runtime.invocationName || "papercli";
 }
@@ -250,6 +255,24 @@ function resolveManagedRepoRoot(env: NodeJS.ProcessEnv): string {
   return path.join(getPaperAiHomeDir(env), "ws");
 }
 
+function formatSummary(items: SummaryItem[]): string {
+  const labelWidth = items.reduce(
+    (max, item) => Math.max(max, item.label.length),
+    0,
+  );
+  return items
+    .map((item) => `${item.label.padEnd(labelWidth)}  ${item.value}`)
+    .join("\n");
+}
+
+function getDatabaseSummary(config: PaperAiConfig): string {
+  if (config.database.mode === "embedded-postgres") {
+    return `Embedded Postgres (${config.database.embeddedDataDir})`;
+  }
+
+  return "External Postgres";
+}
+
 async function loadTuiModules(): Promise<TuiModules> {
   const prompts = await import("@clack/prompts");
   return {
@@ -264,30 +287,46 @@ async function promptOnboardConfig(
   baseConfig: PaperAiConfig,
   hasExistingConfig: boolean,
   suggestedRepoRoot: string,
+  env: NodeJS.ProcessEnv,
 ): Promise<PaperAiConfig | null> {
   const { p } = tui;
   const next = cloneConfig(baseConfig);
+  const managedRepoRoot = resolveManagedRepoRoot(env);
+  const usingManagedRepoRoot = suggestedRepoRoot === managedRepoRoot;
 
   p.intro(pc.bgCyan(pc.black(` ${cliCommand} onboard `)));
+  p.log.message(
+    pc.dim(
+      "Let’s get your local PaperAI setup ready. This keeps the existing onboarding behavior, but walks through it step by step.",
+    ),
+  );
   p.log.message(pc.dim(`Config path: ${configPath}`));
   if (hasExistingConfig) {
     p.log.message(
-      pc.dim("Existing config detected. Quickstart keeps the current values."),
+      pc.dim(
+        "Existing local config detected. Quickstart will keep the current values unless you choose advanced setup.",
+      ),
+    );
+  } else if (usingManagedRepoRoot) {
+    p.log.message(
+      pc.dim(
+        "No checkout detected yet. PaperAI can create its managed checkout in ~/.paperai/ws for you.",
+      ),
     );
   }
 
   const setupModeChoice = await p.select({
-    message: "Choose setup path",
+    message: "How would you like to set up this machine?",
     options: [
       {
         value: "quickstart" as const,
         label: "Quickstart",
-        hint: "Recommended: keep defaults and continue",
+        hint: "Recommended: keep the current/default local settings",
       },
       {
         value: "advanced" as const,
         label: "Advanced setup",
-        hint: "Configure database and server",
+        hint: "Review the local database and server settings before saving",
       },
     ],
     initialValue: "quickstart",
@@ -300,8 +339,17 @@ async function promptOnboardConfig(
 
   const setupMode = setupModeChoice as SetupMode;
 
+  p.log.step(pc.bold("1 of 2 · PaperAI checkout"));
+  p.log.message(
+    pc.dim(
+      usingManagedRepoRoot
+        ? "Use the managed checkout location or point PaperAI at an existing repository clone."
+        : "Point PaperAI at the repository checkout you want this local instance to use.",
+    ),
+  );
+
   const workspaceRoot = await p.text({
-    message: "PaperAI repository checkout root",
+    message: "Repository checkout root for this local setup",
     initialValue: next.repoRoot ?? suggestedRepoRoot,
     validate: validateWorkspaceRoot,
   });
@@ -315,19 +363,26 @@ async function promptOnboardConfig(
   );
 
   if (setupMode === "advanced") {
+    p.log.step(pc.bold("2 of 2 · Local services"));
+    p.log.message(
+      pc.dim(
+        "Advanced setup lets you review the local database and server details before PaperAI writes config.",
+      ),
+    );
+
     p.log.step(pc.bold("Database"));
     const databaseMode = await p.select({
-      message: "Database mode",
+      message: "Which database setup should PaperAI use?",
       options: [
         {
           value: "embedded-postgres" as const,
           label: "Embedded Postgres",
-          hint: "Run Postgres inside PaperAI",
+          hint: "Recommended for local setup: PaperAI manages the database for you",
         },
         {
           value: "postgres" as const,
           label: "External Postgres",
-          hint: "Use your own Postgres connection string",
+          hint: "Use your own Postgres instance and connection string",
         },
       ],
       initialValue: next.database.mode,
@@ -340,7 +395,7 @@ async function promptOnboardConfig(
 
     if (next.database.mode === "postgres") {
       const connectionString = await p.text({
-        message: "Postgres connection string",
+        message: "Postgres connection string for PaperAI",
         initialValue:
           next.database.connectionString ??
           "postgres://user:pass@localhost:5432/paperai",
@@ -384,7 +439,7 @@ async function promptOnboardConfig(
     }
 
     const backupDir = await p.text({
-      message: "Database backup directory",
+      message: "Backup directory for local database snapshots",
       initialValue: next.database.backup.dir,
       validate: (value) => validateRequired(value, "database.backup.dir"),
     });
@@ -396,7 +451,7 @@ async function promptOnboardConfig(
 
     p.log.step(pc.bold("Server"));
     const host = await p.text({
-      message: "Server host",
+      message: "Server host for the local API",
       initialValue: next.server.host,
       validate: (value) => validateRequired(value, "server.host"),
     });
@@ -407,7 +462,7 @@ async function promptOnboardConfig(
     next.server.host = String(host).trim();
 
     const port = await p.text({
-      message: "Server port",
+      message: "Server port for the local API",
       initialValue: String(next.server.port),
       validate: (value) => validatePositiveInteger(value, "server.port"),
     });
@@ -418,7 +473,7 @@ async function promptOnboardConfig(
     next.server.port = parsePositiveInteger(String(port ?? ""), "server.port");
 
     const webOrigin = await p.text({
-      message: "Web origin",
+      message: "Web origin allowed by CORS",
       initialValue: next.server.webOrigin,
       validate: (value) => validateUrl(value, "server.webOrigin"),
     });
@@ -432,7 +487,7 @@ async function promptOnboardConfig(
     );
 
     const jwtSecret = await p.text({
-      message: "JWT secret",
+      message: "JWT secret for local auth",
       initialValue: next.server.jwtSecret,
       validate: (value) => {
         if ((value ?? "").trim().length < 8) {
@@ -451,7 +506,11 @@ async function promptOnboardConfig(
     next.gateway.openclawUrl = deriveGatewayUrlFromServer(next.server);
   } else {
     p.log.step(pc.bold("Quickstart"));
-    p.log.message(pc.dim("Keeping defaults/current values."));
+    p.log.message(
+      pc.dim(
+        "Keeping the current/default local settings. You can fine-tune database or server details later with configure.",
+      ),
+    );
   }
 
   return next;
@@ -467,25 +526,31 @@ function printTuiSummary(
 ) {
   const { p } = tui;
   p.note(
-    [
-      `Config path: ${configPath}`,
-      `Profile path: ${profilePath}`,
-      `API URL: ${apiUrl}`,
-      `Database: ${config.database.mode}`,
-      `Server: ${config.server.host}:${config.server.port}`,
-      `Gateway: ${config.gateway.openclawUrl}`,
-      `Repository root: ${config.repoRoot ?? "(auto-detect)"}`,
-    ].join("\n"),
-    "Configuration saved",
+    formatSummary([
+      { label: "Config", value: configPath },
+      { label: "Profile", value: profilePath },
+      { label: "API", value: apiUrl },
+      { label: "Database", value: getDatabaseSummary(config) },
+      { label: "Server", value: `${config.server.host}:${config.server.port}` },
+      { label: "Gateway", value: config.gateway.openclawUrl },
+      {
+        label: "Checkout",
+        value: config.repoRoot ?? "(auto-detect)",
+      },
+    ]),
+    "Saved local setup",
   );
 
   p.note(
-    [
-      `Run: ${cliCommand} run`,
-      `Reconfigure: ${cliCommand} configure --section <database|server|gateway|auth>`,
-      `Diagnostics: ${cliCommand} doctor`,
-    ].join("\n"),
-    "Next commands",
+    formatSummary([
+      { label: "Start", value: `${cliCommand} run` },
+      {
+        label: "Reconfigure",
+        value: `${cliCommand} configure --section <database|server|gateway|auth>`,
+      },
+      { label: "Diagnostics", value: `${cliCommand} doctor` },
+    ]),
+    "Helpful next commands",
   );
 }
 
@@ -530,6 +595,7 @@ export async function onboardAction(
       baseConfig,
       existing !== null,
       suggestedRepoRoot,
+      context.runtime.env,
     );
     if (!prompted) {
       return;
@@ -570,7 +636,7 @@ export async function onboardAction(
   let shouldRunNow = options.run === true || options.yes === true;
   if (tui && !shouldRunNow) {
     const answer = await tui.p.confirm({
-      message: "Start PaperAI now?",
+      message: "Start PaperAI now with this local setup?",
       initialValue: true,
     });
     if (tui.p.isCancel(answer)) {
@@ -599,7 +665,7 @@ export async function onboardAction(
       profilePath,
       cliCommand,
     );
-    tui.p.outro("You're all set!");
+    tui.p.outro("Your local PaperAI setup is ready.");
     return;
   }
 
