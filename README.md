@@ -23,6 +23,11 @@ PaperAI is a self-hosted TypeScript control plane for zero-human companies.
 4. Run `pnpm db:push`
 5. Run `pnpm dev`
 
+In dev, the web UI and API share one public port: open
+`http://localhost:3001`, and API requests are available under `/api/v1`.
+To make that port reachable from other machines on your network, start dev
+with `HOST=0.0.0.0 pnpm dev`.
+
 ## `papercli`
 
 PaperAI ships with an agent-first CLI for scripted and autonomous workflows.
@@ -75,8 +80,13 @@ Local instance lifecycle:
 ```bash
 paperai onboard --yes
 paperai update
+paperai gateway install
 paperai doctor
 ```
+
+`paperai gateway install` installs a user systemd unit by default. Use
+`--system` for `/etc/systemd/system`, `--start` to start after install, or
+`--dry-run` to inspect the generated unit.
 
 Operating extensions:
 

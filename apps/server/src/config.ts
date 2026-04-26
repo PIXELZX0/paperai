@@ -21,7 +21,7 @@ export function getConfig(): ServerConfig {
     port: Number(process.env.PORT ?? 3001),
     databaseUrl: process.env.DATABASE_URL ?? "postgres://postgres:postgres@localhost:5432/paperai",
     jwtSecret: process.env.JWT_SECRET ?? "change-me",
-    webOrigin: process.env.PAPERAI_WEB_ORIGIN ?? "http://localhost:5173",
+    webOrigin: process.env.PAPERAI_WEB_ORIGIN ?? "http://localhost:3001",
     auth: {
       boardClaimTtlMinutes: Number(process.env.BOARD_CLAIM_TTL_MINUTES ?? 30),
       cliChallengeTtlMinutes: Number(process.env.CLI_CHALLENGE_TTL_MINUTES ?? 10),

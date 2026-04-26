@@ -10,12 +10,26 @@ import os from "node:os";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import { EventEmitter } from "node:events";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getInstanceConfigPath } from "../lib/config.js";
 import type { CommandContext } from "../lib/context.js";
 import { onboardAction } from "./onboard.js";
 
-const { spawnMock } = vi.hoisted(() => ({
+const { promptMock, spawnMock } = vi.hoisted(() => ({
+  promptMock: {
+    cancel: vi.fn(),
+    confirm: vi.fn(),
+    intro: vi.fn(),
+    isCancel: vi.fn(() => false),
+    log: {
+      message: vi.fn(),
+      step: vi.fn(),
+    },
+    note: vi.fn(),
+    outro: vi.fn(),
+    select: vi.fn(),
+    text: vi.fn(),
+  },
   spawnMock: vi.fn(),
 }));
 
@@ -23,8 +37,15 @@ vi.mock("node:child_process", () => ({
   spawn: spawnMock,
 }));
 
+vi.mock("@clack/prompts", () => promptMock);
+
 const tempDirs: string[] = [];
 let originalCwd = process.cwd();
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  promptMock.isCancel.mockReturnValue(false);
+});
 
 afterEach(async () => {
   process.chdir(originalCwd);
@@ -36,6 +57,8 @@ afterEach(async () => {
 });
 
 class NullWritable extends Writable {
+  isTTY?: boolean;
+
   override _write(
     _chunk: Buffer | string,
     _encoding: BufferEncoding,
@@ -68,16 +91,21 @@ async function createWorkspaceRoot(root: string) {
   );
 }
 
-function createContext(env: NodeJS.ProcessEnv): CommandContext {
+function createContext(
+  env: NodeJS.ProcessEnv,
+  options: { isTty?: boolean } = {},
+): CommandContext {
   const stdin = Readable.from([]) as Readable & { isTTY?: boolean };
-  stdin.isTTY = false;
+  stdin.isTTY = options.isTty === true;
+  const stdout = new NullWritable();
+  stdout.isTTY = options.isTty === true;
 
   return {
     runtime: {
       env,
       fetchImpl: fetch,
       stdin,
-      stdout: new NullWritable(),
+      stdout,
       stderr: new NullWritable(),
       invocationName: "papercli",
     },
@@ -160,6 +188,43 @@ describe("onboardAction", () => {
       await readFile(getInstanceConfigPath(env), "utf8"),
     ) as { repoRoot?: string };
     expect(persistedConfig.repoRoot).toBe(managedRepoRoot);
+  });
+
+  it("lets quickstart choose whether the local API and web UI bind to all interfaces", async () => {
+    const home = await createTempDir("paperai-onboard-host-home-");
+    const workspaceRoot = await createTempDir("paperai-onboard-host-repo-");
+    await createWorkspaceRoot(workspaceRoot);
+    process.chdir(workspaceRoot);
+    const env = {
+      HOME: home,
+      PAPERAI_HOME: path.join(home, ".paperai"),
+    };
+    const context = createContext(env, { isTty: true });
+
+    promptMock.select
+      .mockResolvedValueOnce("quickstart")
+      .mockResolvedValueOnce("0.0.0.0");
+    promptMock.text.mockResolvedValueOnce(workspaceRoot);
+    promptMock.confirm.mockResolvedValueOnce(false);
+
+    await onboardAction(context, {});
+
+    expect(promptMock.select).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        initialValue: "127.0.0.1",
+        message: "Which hostname should the local API and web UI bind to?",
+        options: [
+          expect.objectContaining({ value: "127.0.0.1" }),
+          expect.objectContaining({ value: "0.0.0.0" }),
+        ],
+      }),
+    );
+
+    const persistedConfig = JSON.parse(
+      await readFile(getInstanceConfigPath(env), "utf8"),
+    ) as { server?: { host?: string } };
+    expect(persistedConfig.server?.host).toBe("0.0.0.0");
   });
 
   it("does not persist config when repository bootstrap fails", async () => {

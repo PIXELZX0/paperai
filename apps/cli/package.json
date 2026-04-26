@@ -1,6 +1,6 @@
 {
   "name": "@alex110709/paperai",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "type": "module",
   "files": [
     "dist"

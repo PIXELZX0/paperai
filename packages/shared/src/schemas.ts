@@ -367,7 +367,7 @@ export const paperAiDatabaseConfigSchema = z
 export const paperAiServerConfigSchema = z.object({
   host: z.string().min(1).default("127.0.0.1"),
   port: z.number().int().positive().default(3001),
-  webOrigin: z.string().url().default("http://localhost:5173"),
+  webOrigin: z.string().url().default("http://localhost:3001"),
   jwtSecret: z.string().min(8).default("change-me-paperai"),
 });
 

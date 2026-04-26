@@ -36,8 +36,7 @@ import type {
 } from "@paperai/shared";
 
 export const API_BASE =
-  import.meta.env.VITE_API_BASE_URL ??
-  (import.meta.env.DEV ? "http://localhost:3001/api/v1" : `${window.location.origin}/api/v1`);
+  import.meta.env.VITE_API_BASE_URL ?? `${window.location.origin}/api/v1`;
 
 export interface SessionState {
   token: string | null;

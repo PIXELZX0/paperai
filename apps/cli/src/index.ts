@@ -11,6 +11,7 @@ import { registerCompanyCommands } from "./commands/company.js";
 import { registerConfigureCommands } from "./commands/configure.js";
 import { registerDbBackupCommands } from "./commands/db-backup.js";
 import { registerDoctorCommands } from "./commands/doctor.js";
+import { registerGatewayCommands } from "./commands/gateway.js";
 import { registerIssueCommands } from "./commands/issue.js";
 import { registerLegacyCommands } from "./commands/legacy.js";
 import { registerOnboardCommands } from "./commands/onboard.js";
@@ -61,6 +62,7 @@ export function buildProgram(input: CliRuntimeInput = {}) {
   registerDoctorCommands(program, context);
   registerRunCommands(program, context);
   registerDbBackupCommands(program, context);
+  registerGatewayCommands(program, context);
   registerCompanyCommands(program, context);
   registerWorkspaceCommands(program, context);
   registerSkillCommands(program, context);

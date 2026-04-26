@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "pnpm --parallel --filter @paperai/server --filter @paperai/web dev",
+    "dev": "tsx scripts/dev.ts",
     "lint": "eslint . --ext .ts,.tsx,.mjs",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",

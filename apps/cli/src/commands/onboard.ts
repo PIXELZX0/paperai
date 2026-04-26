@@ -43,6 +43,7 @@ type OnboardOptions = {
 };
 
 type SetupMode = "quickstart" | "advanced";
+type ServerHostChoice = "127.0.0.1" | "0.0.0.0";
 
 type PromptApi = typeof import("@clack/prompts");
 
@@ -54,6 +55,8 @@ interface SummaryItem {
   label: string;
   value: string;
 }
+
+const serverHostChoices: ServerHostChoice[] = ["127.0.0.1", "0.0.0.0"];
 
 function getCliCommand(context: CommandContext): string {
   return context.runtime.invocationName || "papercli";
@@ -273,11 +276,45 @@ function getDatabaseSummary(config: PaperAiConfig): string {
   return "External Postgres";
 }
 
+function getInitialServerHostChoice(host: string): ServerHostChoice {
+  return serverHostChoices.includes(host as ServerHostChoice)
+    ? (host as ServerHostChoice)
+    : "127.0.0.1";
+}
+
 async function loadTuiModules(): Promise<TuiModules> {
   const prompts = await import("@clack/prompts");
   return {
     p: prompts,
   };
+}
+
+async function promptServerHostChoice(
+  tui: TuiModules,
+  currentHost: string,
+): Promise<ServerHostChoice | null> {
+  const { p } = tui;
+  const host = await p.select({
+    message: "Which hostname should the local API and web UI bind to?",
+    options: [
+      {
+        value: "127.0.0.1" as const,
+        label: "127.0.0.1",
+        hint: "Only this machine can connect to the API and web UI",
+      },
+      {
+        value: "0.0.0.0" as const,
+        label: "0.0.0.0",
+        hint: "Expose the API and web UI on all network interfaces",
+      },
+    ],
+    initialValue: getInitialServerHostChoice(currentHost),
+  });
+  if (p.isCancel(host)) {
+    p.cancel("Onboarding cancelled.");
+    return null;
+  }
+  return host as ServerHostChoice;
 }
 
 async function promptOnboardConfig(
@@ -505,12 +542,17 @@ async function promptOnboardConfig(
     // Keep auth TTL defaults without prompting and derive gateway URL from server settings.
     next.gateway.openclawUrl = deriveGatewayUrlFromServer(next.server);
   } else {
-    p.log.step(pc.bold("Quickstart"));
+    p.log.step(pc.bold("2 of 2 · Quickstart"));
     p.log.message(
       pc.dim(
-        "Keeping the current/default local settings. You can fine-tune database or server details later with configure.",
+        "Keeping the current/default local settings, with one hostname choice for how the API and web UI should listen.",
       ),
     );
+    const host = await promptServerHostChoice(tui, next.server.host);
+    if (!host) {
+      return null;
+    }
+    next.server.host = host;
   }
 
   return next;

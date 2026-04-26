@@ -85,7 +85,7 @@ describe("updateAction", () => {
       server: {
         host: "127.0.0.1",
         port: 3001,
-        webOrigin: "http://localhost:5173",
+        webOrigin: "http://localhost:3001",
         jwtSecret: "default-secret",
       },
       gateway: {

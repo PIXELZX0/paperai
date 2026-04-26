@@ -8,7 +8,7 @@ const testConfig = {
   port: 3001,
   databaseUrl: "postgres://unused",
   jwtSecret: "test-secret",
-  webOrigin: "http://localhost:5173",
+  webOrigin: "http://localhost:3001",
   auth: {
     boardClaimTtlMinutes: 30,
     cliChallengeTtlMinutes: 10,
