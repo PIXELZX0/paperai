@@ -347,6 +347,46 @@ async function pathExists(targetPath: string): Promise<boolean> {
   }
 }
 
+function repoBinPath(repoRoot: string, binaryName: string): string {
+  return path.join(
+    repoRoot,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? `${binaryName}.cmd` : binaryName,
+  );
+}
+
+async function ensureWorkspaceDependencies(
+  runtime: CliRuntime,
+  repoRoot: string,
+  options: { webBuild?: boolean } = {},
+) {
+  const requiredPaths = [
+    path.join(repoRoot, "node_modules", ".modules.yaml"),
+    repoBinPath(repoRoot, "drizzle-kit"),
+  ];
+
+  if (options.webBuild) {
+    requiredPaths.push(path.join(repoRoot, "apps", "web", "node_modules"));
+    requiredPaths.push(repoBinPath(path.join(repoRoot, "apps", "web"), "vite"));
+  }
+
+  const hasRequiredDependencies = (
+    await Promise.all(requiredPaths.map((targetPath) => pathExists(targetPath)))
+  ).every(Boolean);
+  if (hasRequiredDependencies) {
+    return;
+  }
+
+  runtime.stderr.write(
+    `PaperAI repository dependencies are missing; running pnpm install --frozen-lockfile in ${repoRoot}\n`,
+  );
+  await runProcess(runtime, "pnpm", ["install", "--frozen-lockfile"], {
+    cwd: repoRoot,
+    env: runtime.env,
+  });
+}
+
 export async function ensureWritableDirectory(dirPath: string) {
   await mkdir(dirPath, { recursive: true });
   await access(dirPath, fsConstants.W_OK);
@@ -425,6 +465,7 @@ export async function runProcess(
 
 export async function ensureDatabaseSchema(runtime: CliRuntime) {
   const repoRoot = resolveRepoRoot(runtime.env);
+  await ensureWorkspaceDependencies(runtime, repoRoot);
   await runProcess(runtime, "pnpm", ["db:push"], {
     cwd: repoRoot,
     env: runtime.env,
@@ -446,6 +487,7 @@ export async function ensureWebBuild(
     return;
   }
 
+  await ensureWorkspaceDependencies(runtime, repoRoot, { webBuild: true });
   await runProcess(runtime, "pnpm", ["--filter", "@paperai/web", "build"], {
     cwd: repoRoot,
     env: runtime.env,

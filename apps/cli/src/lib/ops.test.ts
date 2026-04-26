@@ -13,7 +13,9 @@ vi.mock("node:child_process", () => ({
 }));
 
 import {
+  ensureDatabaseSchema,
   ensurePaperAiCheckout,
+  ensureWebBuild,
   resolveRepoRoot,
   validateRepoRootCandidatePath,
 } from "./ops.js";
@@ -63,6 +65,37 @@ async function createWorkspaceRoot(root: string) {
   );
 }
 
+function binName(name: string) {
+  return process.platform === "win32" ? `${name}.cmd` : name;
+}
+
+async function createRootDependencySentinels(root: string) {
+  await mkdir(path.join(root, "node_modules", ".bin"), { recursive: true });
+  await writeFile(path.join(root, "node_modules", ".modules.yaml"), "ok\n");
+  await writeFile(
+    path.join(root, "node_modules", ".bin", binName("drizzle-kit")),
+    "",
+  );
+}
+
+async function createWebPackage(root: string) {
+  await mkdir(path.join(root, "apps", "web"), { recursive: true });
+  await writeFile(
+    path.join(root, "apps", "web", "package.json"),
+    `${JSON.stringify({ name: "@paperai/web" }, null, 2)}\n`,
+  );
+}
+
+async function createWebDependencySentinels(root: string) {
+  await mkdir(path.join(root, "apps", "web", "node_modules", ".bin"), {
+    recursive: true,
+  });
+  await writeFile(
+    path.join(root, "apps", "web", "node_modules", ".bin", binName("vite")),
+    "",
+  );
+}
+
 function installCloneMock() {
   spawnMock.mockImplementation((command: string, args: string[]) => {
     const child = new EventEmitter() as EventEmitter & {
@@ -82,6 +115,14 @@ function installCloneMock() {
       child.emit("error", error);
     });
 
+    return child;
+  });
+}
+
+function installSuccessfulProcessMock() {
+  spawnMock.mockImplementation(() => {
+    const child = new EventEmitter();
+    queueMicrotask(() => child.emit("close", 0));
     return child;
   });
 }
@@ -270,5 +311,105 @@ describe("ensurePaperAiCheckout", () => {
       /cannot be recovered automatically/,
     );
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("workspace script prerequisites", () => {
+  it("installs missing repository dependencies before pushing schema", async () => {
+    const root = await createTempDir("paperai-schema-missing-deps-");
+    await createWorkspaceRoot(root);
+    installSuccessfulProcessMock();
+
+    const runtime = {
+      env: { PAPERAI_REPO_ROOT: root },
+      stderr: process.stderr,
+      stdout: process.stdout,
+    };
+    await ensureDatabaseSchema(runtime as never);
+
+    expect(spawnMock).toHaveBeenNthCalledWith(
+      1,
+      "pnpm",
+      ["install", "--frozen-lockfile"],
+      expect.objectContaining({ cwd: root }),
+    );
+    expect(spawnMock).toHaveBeenNthCalledWith(
+      2,
+      "pnpm",
+      ["db:push"],
+      expect.objectContaining({ cwd: root }),
+    );
+  });
+
+  it("uses existing repository dependencies when pushing schema", async () => {
+    const root = await createTempDir("paperai-schema-existing-deps-");
+    await createWorkspaceRoot(root);
+    await createRootDependencySentinels(root);
+    installSuccessfulProcessMock();
+
+    const runtime = {
+      env: { PAPERAI_REPO_ROOT: root },
+      stderr: process.stderr,
+      stdout: process.stdout,
+    };
+    await ensureDatabaseSchema(runtime as never);
+
+    expect(spawnMock).toHaveBeenCalledOnce();
+    expect(spawnMock).toHaveBeenCalledWith(
+      "pnpm",
+      ["db:push"],
+      expect.objectContaining({ cwd: root }),
+    );
+  });
+
+  it("installs when web build dependencies are missing", async () => {
+    const root = await createTempDir("paperai-web-missing-deps-");
+    await createWorkspaceRoot(root);
+    await createRootDependencySentinels(root);
+    await createWebPackage(root);
+    installSuccessfulProcessMock();
+
+    const runtime = {
+      env: { PAPERAI_REPO_ROOT: root },
+      stderr: process.stderr,
+      stdout: process.stdout,
+    };
+    await ensureWebBuild(runtime as never, { force: true });
+
+    expect(spawnMock).toHaveBeenNthCalledWith(
+      1,
+      "pnpm",
+      ["install", "--frozen-lockfile"],
+      expect.objectContaining({ cwd: root }),
+    );
+    expect(spawnMock).toHaveBeenNthCalledWith(
+      2,
+      "pnpm",
+      ["--filter", "@paperai/web", "build"],
+      expect.objectContaining({ cwd: root }),
+    );
+  });
+
+  it("uses existing web build dependencies", async () => {
+    const root = await createTempDir("paperai-web-existing-deps-");
+    await createWorkspaceRoot(root);
+    await createRootDependencySentinels(root);
+    await createWebPackage(root);
+    await createWebDependencySentinels(root);
+    installSuccessfulProcessMock();
+
+    const runtime = {
+      env: { PAPERAI_REPO_ROOT: root },
+      stderr: process.stderr,
+      stdout: process.stdout,
+    };
+    await ensureWebBuild(runtime as never, { force: true });
+
+    expect(spawnMock).toHaveBeenCalledOnce();
+    expect(spawnMock).toHaveBeenCalledWith(
+      "pnpm",
+      ["--filter", "@paperai/web", "build"],
+      expect.objectContaining({ cwd: root }),
+    );
   });
 });
