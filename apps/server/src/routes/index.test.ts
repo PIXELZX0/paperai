@@ -132,8 +132,8 @@ describe("resource read routes", () => {
       },
     });
 
-    expect(response.statusCode).toBe(500);
-    expect(response.json()).toMatchObject({ message: "not_found" });
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: "not_found", message: "not_found" });
     await app.close();
   });
 
@@ -157,8 +157,37 @@ describe("resource read routes", () => {
       },
     });
 
-    expect(response.statusCode).toBe(500);
-    expect(response.json()).toMatchObject({ message: "forbidden" });
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ error: "forbidden", message: "forbidden" });
+    await app.close();
+  });
+
+  it("returns validation errors as bad requests", async () => {
+    const runtime = createRuntimeStub();
+    const platformService = createPlatformServiceStub();
+
+    const app = await createApp({
+      config: testConfig,
+      platformService,
+      runtime,
+    });
+
+    const token = app.jwt.sign({ sub: "user-1", email: "user@example.com" });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/positions?companyId=company-1",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+      payload: {
+        slug: "x",
+        name: "",
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "validation_failed", message: "validation_failed" });
+    expect(vi.mocked(platformService.createPosition)).not.toHaveBeenCalled();
     await app.close();
   });
 

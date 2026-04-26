@@ -62,6 +62,33 @@ export function saveSession(session: SessionState) {
   localStorage.setItem("paperai.session", JSON.stringify(session));
 }
 
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code: string,
+    public readonly details?: unknown,
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
+function parseErrorPayload(text: string): { code: string; message: string; details?: unknown } {
+  if (!text) {
+    return { code: "request_failed", message: "request_failed" };
+  }
+
+  try {
+    const payload = JSON.parse(text) as { error?: unknown; message?: unknown };
+    const code = typeof payload.error === "string" ? payload.error : "request_failed";
+    const message = typeof payload.message === "string" ? payload.message : code;
+    return { code, message, details: payload };
+  } catch {
+    return { code: "request_failed", message: text };
+  }
+}
+
 export async function apiRequest<T>(path: string, token: string | null, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -74,10 +101,12 @@ export async function apiRequest<T>(path: string, token: string | null, init?: R
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || "request_failed");
+    const payload = parseErrorPayload(text);
+    throw new ApiRequestError(payload.message, response.status, payload.code, payload.details);
   }
 
-  return (await response.json()) as T;
+  const text = await response.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export const api = {

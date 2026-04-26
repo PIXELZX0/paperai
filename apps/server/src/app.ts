@@ -31,6 +31,95 @@ function looksLikeJwt(token: string): boolean {
   return token.split(".").length === 3;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isZodError(error: unknown): error is { issues: Array<{ path?: unknown; message?: unknown }> } {
+  return isRecord(error) && error.name === "ZodError" && Array.isArray(error.issues);
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message.length > 0 ? error.message : "request_failed";
+}
+
+function getHttpStatusCode(error: unknown): number | null {
+  const statusCode = isRecord(error) ? error.statusCode : undefined;
+  return typeof statusCode === "number" && statusCode >= 400 && statusCode < 600 ? statusCode : null;
+}
+
+function normalizeDomainErrorCode(message: string): string | null {
+  const code = message.split(":", 1)[0] ?? "";
+  return /^[a-z][a-z0-9_]*$/.test(code) ? code : null;
+}
+
+function getDomainErrorStatus(code: string): number | null {
+  if (code === "unauthorized" || code === "invalid_credentials") {
+    return 401;
+  }
+  if (code === "forbidden") {
+    return 403;
+  }
+  if (code === "not_found" || code.endsWith("_not_found")) {
+    return 404;
+  }
+  if (code.includes("already") || code.endsWith("_conflict")) {
+    return 409;
+  }
+  if (code.startsWith("invalid_") || code.endsWith("_required")) {
+    return 400;
+  }
+  return null;
+}
+
+function mapErrorResponse(error: unknown) {
+  if (isZodError(error)) {
+    return {
+      statusCode: 400,
+      body: {
+        error: "validation_failed",
+        message: "validation_failed",
+        issues: error.issues.map((issue) => ({
+          path: Array.isArray(issue.path) ? issue.path.join(".") : "",
+          message: typeof issue.message === "string" ? issue.message : "Invalid input",
+        })),
+      },
+    };
+  }
+
+  const message = getErrorMessage(error);
+  const domainCode = normalizeDomainErrorCode(message);
+  const domainStatus = domainCode ? getDomainErrorStatus(domainCode) : null;
+  if (domainCode && domainStatus) {
+    return {
+      statusCode: domainStatus,
+      body: {
+        error: domainCode,
+        message: domainCode,
+      },
+    };
+  }
+
+  const httpStatusCode = getHttpStatusCode(error);
+  if (httpStatusCode && httpStatusCode < 500) {
+    return {
+      statusCode: httpStatusCode,
+      body: {
+        error: "request_failed",
+        message,
+      },
+    };
+  }
+
+  return {
+    statusCode: 500,
+    body: {
+      error: "internal_error",
+      message: "internal_error",
+    },
+  };
+}
+
 export interface CreateAppOptions {
   config?: ReturnType<typeof getConfig>;
   eventBus?: DomainEventBus;
@@ -51,6 +140,14 @@ export async function createApp(options: CreateAppOptions = {}) {
   });
   await app.register(jwt, {
     secret: config.jwtSecret,
+  });
+
+  app.setErrorHandler((error, request, reply) => {
+    const response = mapErrorResponse(error);
+    if (response.statusCode >= 500) {
+      request.log.error({ err: error }, "request_failed");
+    }
+    reply.code(response.statusCode).send(response.body);
   });
 
   app.decorate("platformService", platformService);
