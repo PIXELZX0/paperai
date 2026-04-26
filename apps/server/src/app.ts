@@ -11,9 +11,23 @@ import { routes } from "./routes/index.js";
 import { PlatformService } from "./services/platform-service.js";
 import { RuntimeOrchestrator } from "./services/runtime.js";
 
-function findWebDistDir() {
-  const candidates = [resolve(process.cwd(), "apps/web/dist"), resolve(process.cwd(), "../web/dist")];
-  return candidates.find((candidate) => existsSync(candidate));
+function findWebDistDir(env: NodeJS.ProcessEnv = process.env) {
+  const webDistDir = env.PAPERAI_WEB_DIST_DIR?.trim();
+  const repoRoot = env.PAPERAI_REPO_ROOT?.trim();
+  const candidates = [
+    webDistDir ? resolve(webDistDir) : null,
+    repoRoot ? resolve(repoRoot, "apps/web/dist") : null,
+    resolve(process.cwd(), "apps/web/dist"),
+    resolve(process.cwd(), "../web/dist"),
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return undefined;
 }
 
 function parseBearerToken(header: string | undefined): string | null {
@@ -227,7 +241,7 @@ export async function createApp(options: CreateAppOptions = {}) {
     await app.register(fastifyStatic, {
       root: webDistDir,
       prefix: "/",
-      index: false,
+      index: "index.html",
     });
 
     app.setNotFoundHandler(async (request, reply) => {
@@ -238,7 +252,7 @@ export async function createApp(options: CreateAppOptions = {}) {
         request.url !== "/health" &&
         !request.url.includes(".");
 
-      if (acceptsHtml && isSpaRoute) {
+      if ((acceptsHtml || request.url === "/") && isSpaRoute) {
         return reply.sendFile("index.html");
       }
 

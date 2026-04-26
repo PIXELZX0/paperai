@@ -1,3 +1,4 @@
+import path from "node:path";
 import { Command } from "commander";
 import type { EmbeddedPostgresHandle } from "@paperai/db";
 import type { CommandContext } from "../lib/context.js";
@@ -36,7 +37,9 @@ export async function runAction(context: CommandContext, options: RunOptions) {
     await writeInstanceConfig(context.runtime.env, config);
   }
 
-  resolveRepoRoot(context.runtime.env);
+  const repoRoot = resolveRepoRoot(context.runtime.env);
+  context.runtime.env.PAPERAI_REPO_ROOT = repoRoot;
+  context.runtime.env.PAPERAI_WEB_DIST_DIR = path.join(repoRoot, "apps", "web", "dist");
 
   let embeddedHandle: EmbeddedPostgresHandle | null = null;
   let close = async () => {};
